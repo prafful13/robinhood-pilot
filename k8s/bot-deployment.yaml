@@ -63,6 +63,21 @@ spec:
             limits:
               memory: "512Mi"
               cpu: "500m"
+          livenessProbe:
+            exec:
+              command:
+                - python3
+                - -c
+                - |
+                  import os, sys, time
+                  p = '/tmp/heartbeat'
+                  if not os.path.exists(p):
+                      sys.exit(1)
+                  if time.time() - os.path.getmtime(p) > 1800:
+                      sys.exit(1)
+            initialDelaySeconds: 120   # give bot time to start up
+            periodSeconds: 60
+            failureThreshold: 3        # restart after 3 missed heartbeats (~3 min)
 
       volumes:
         - name: rh-tokens-secret

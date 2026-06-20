@@ -5,15 +5,25 @@ Each public method corresponds to a Robinhood MCP tool.
 """
 
 import json
+import logging
 import time
 import uuid
 from datetime import datetime, timedelta
-from typing import Any
 
 import httpx
 import pytz
 
 from broker.oauth import get_access_token
+
+log = logging.getLogger(__name__)
+
+# Exceptions that indicate a stale TCP connection (e.g. after laptop sleep)
+_STALE_CONNECTION_ERRORS = (
+    httpx.ConnectError,
+    httpx.RemoteProtocolError,
+    httpx.ReadError,
+    httpx.WriteError,
+)
 
 
 MCP_URL = "https://agent.robinhood.com/mcp/trading"
@@ -60,15 +70,36 @@ class RobinhoodClient:
             h["Mcp-Session-Id"] = self._session_id
         return h
 
+    async def _reconnect(self) -> None:
+        """Rebuild the HTTP client and re-initialize the MCP session.
+        Called after a stale connection error (e.g. laptop woke from sleep).
+        """
+        log.warning("MCP connection lost — reconnecting...")
+        try:
+            await self._http.aclose()
+        except Exception:
+            pass
+        self._http = httpx.AsyncClient(timeout=30)
+        self._session_id = None
+        self._token = None  # force token reload too
+        await self._ensure_token()
+        await self._initialize_session()
+        log.info("MCP reconnected")
+
     async def _post(self, payload: dict) -> dict:
         await self._ensure_token()
-        resp = await self._http.post(MCP_URL, json=payload, headers=self._headers())
+        try:
+            resp = await self._http.post(MCP_URL, json=payload, headers=self._headers())
+        except _STALE_CONNECTION_ERRORS:
+            # Laptop woke from sleep — TCP connections are dead. Reconnect and retry once.
+            await self._reconnect()
+            resp = await self._http.post(MCP_URL, json=payload, headers=self._headers())
 
         if sid := resp.headers.get("Mcp-Session-Id"):
             self._session_id = sid
 
         if resp.status_code == 401:
-            # Token expired mid-session; force re-auth
+            # Token expired mid-session; force re-auth and retry once
             self._token = None
             await self._ensure_token()
             resp = await self._http.post(MCP_URL, json=payload, headers=self._headers())

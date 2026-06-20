@@ -10,6 +10,7 @@ Trading bot main loop.
 import asyncio
 import logging
 import os
+import signal
 from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
@@ -174,6 +175,13 @@ async def run_cycle(broker: RobinhoodClient, strategy: RSIMeanReversion, risk: R
             log.info(f"  ✓ SELL order placed: {sig.symbol}  qty={qty_str}  PnL=${pnl:.2f}  order={order_id}")
 
 
+_HEARTBEAT = Path("/tmp/heartbeat")
+
+
+def _touch_heartbeat() -> None:
+    _HEARTBEAT.touch()
+
+
 async def main():
     cfg = load_config()
     init_db()
@@ -181,6 +189,17 @@ async def main():
     account = cfg["account_number"]
     strategy = RSIMeanReversion(cfg)
     risk = RiskManager(cfg)
+
+    shutdown = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(
+            sig,
+            lambda s=sig: (
+                log.info(f"Received {signal.Signals(s).name} — finishing current cycle then exiting"),
+                shutdown.set(),
+            ),
+        )
 
     log.info("Robinhood RSI trader starting up")
     log.info(f"Watchlist: {cfg['watchlist']}")
@@ -190,7 +209,9 @@ async def main():
              f"daily loss limit ${cfg['risk']['daily_loss_limit_usd']}")
 
     async with RobinhoodClient(cfg) as broker:
-        while True:
+        while not shutdown.is_set():
+            _touch_heartbeat()
+
             if is_market_open():
                 try:
                     await run_cycle(broker, strategy, risk, account)
@@ -200,7 +221,12 @@ async def main():
                 now = datetime.now(ET)
                 log.info(f"market closed ({now.strftime('%a %H:%M ET')}) — sleeping")
 
-            await asyncio.sleep(CHECK_INTERVAL_SECS)
+            try:
+                await asyncio.wait_for(shutdown.wait(), timeout=CHECK_INTERVAL_SECS)
+            except asyncio.TimeoutError:
+                pass
+
+    log.info("Bot shut down cleanly")
 
 
 if __name__ == "__main__":

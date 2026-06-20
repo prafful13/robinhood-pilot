@@ -344,6 +344,60 @@ def k8s_restart(c):
     c.run(f"kubectl rollout status  deployment/robinhood-bot       -n {NS}")
 
 
+@task(name="k8s-backup-now")
+def k8s_backup_now(c):
+    """Trigger an immediate pg_dump backup (runs the CronJob as a one-off Job)."""
+    import time as _time
+    job_name = f"postgres-backup-manual-{int(_time.time())}"
+    c.run(
+        f"kubectl create job {job_name} "
+        f"--from=cronjob/postgres-backup "
+        f"-n {NS}"
+    )
+    print(f"✓ Backup job '{job_name}' started")
+    print(f"  Watch: kubectl logs job/{job_name} -n {NS} -f")
+
+
+@task(name="k8s-backup-ls")
+def k8s_backup_ls(c):
+    """List all database backups on the backup PVC with sizes."""
+    result = c.run(
+        f"kubectl get pod -n {NS} -l app=postgres -o jsonpath='{{.items[0].metadata.name}}'",
+        hide=True, warn=True,
+    )
+    pod = result.stdout.strip()
+    if not pod:
+        print("Postgres pod not found.")
+        return
+    c.run(
+        f"kubectl exec {pod} -n {NS} -- "
+        f"sh -c 'ls -lht /backups/*.sql.gz 2>/dev/null || echo No backups yet'",
+        warn=True,
+    )
+
+
+@task(name="k8s-backup-restore")
+def k8s_backup_restore(c, file):
+    """Restore the database from a named backup file on the PVC.
+    Usage: inv k8s-backup-restore --file robinhood_trader_20260619_050000.sql.gz
+    WARNING: drops and recreates all tables.
+    """
+    from vault.keychain import get
+    pg_pass = get("postgres_password") or ""
+    print(f"⚠ Restoring from /backups/{file} — this will OVERWRITE the current database.")
+    confirm = input("Type 'yes' to continue: ")
+    if confirm.strip() != "yes":
+        print("Aborted.")
+        return
+    c.run(
+        f"kubectl port-forward svc/postgres 5432:5432 -n {NS} &"
+        f" sleep 2 && PGPASSWORD={pg_pass!r} "
+        f"sh -c 'kubectl exec -n {NS} deployment/postgres -- "
+        f"sh -c \"gunzip -c /backups/{file} | psql -U trader robinhood_trader\"'",
+        warn=True, pty=True,
+    )
+
+
 @task(name="k8s-delete")
 def k8s_delete(c):
     """Delete all resources in the namespace (keeps the namespace and SealedSecrets)."""
