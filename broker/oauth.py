@@ -25,8 +25,26 @@ import httpx
 from aiohttp import web
 
 KEYCHAIN_KEY = "oauth_tokens"
-# Public OAuth client ID for Robinhood's Agentic/Claude MCP integration (PKCE, no secret)
-_CLIENT_ID = "ROBINHOOD_AGENTIC_CLIENT_ID"
+_CLIENT_ID_KEYCHAIN_KEY = "client_id"
+
+
+def _get_client_id(cfg: dict) -> str:
+    if cid := cfg.get("client_id"):
+        return cid
+    if cid := os.environ.get("ROBINHOOD_CLIENT_ID"):
+        return cid
+    if not _is_in_cluster():
+        try:
+            from vault.keychain import get
+            if cid := get(_CLIENT_ID_KEYCHAIN_KEY):
+                return cid
+        except Exception:
+            pass
+    raise ValueError(
+        "ROBINHOOD_CLIENT_ID not found.\n"
+        "  Local: uv run inv keychain-set client_id <value>\n"
+        "  k8s:   uv run inv k8s-seal && kubectl apply -f k8s/sealed/"
+    )
 
 
 def _is_in_cluster() -> bool:
@@ -162,7 +180,7 @@ async def get_access_token(cfg: dict) -> str:
 
     if tokens and tokens.get("refresh_token") and _is_expired(tokens):
         try:
-            fresh = await _refresh_access_token(token_url, cfg.get("client_id", _CLIENT_ID), tokens["refresh_token"])
+            fresh = await _refresh_access_token(token_url, _get_client_id(cfg), tokens["refresh_token"])
             _save_tokens(fresh)
             return fresh["access_token"]
         except Exception:
@@ -174,7 +192,7 @@ async def get_access_token(cfg: dict) -> str:
 
     params = {
         "response_type": "code",
-        "client_id": cfg.get("client_id", _CLIENT_ID),
+        "client_id": _get_client_id(cfg),
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
         "redirect_uri": cfg["redirect_uri"],
@@ -189,7 +207,7 @@ async def get_access_token(cfg: dict) -> str:
 
     code, _ = await _run_callback_server(state)
     tokens = await _exchange_code(
-        token_url, cfg.get("client_id", _CLIENT_ID), cfg["redirect_uri"], code, code_verifier
+        token_url, _get_client_id(cfg), cfg["redirect_uri"], code, code_verifier
     )
     _save_tokens(tokens)
     print("Authentication successful. Token saved to macOS Keychain.")

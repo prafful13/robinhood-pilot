@@ -41,6 +41,11 @@ spec:
           env:
             - name: TOKEN_FILE
               value: /token/rh_tokens.json
+            - name: ROBINHOOD_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: rh-tokens
+                  key: client_id
             - name: DB_URL
               valueFrom:
                 secretKeyRef:

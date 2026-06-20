@@ -70,10 +70,17 @@ def secrets_init(c):
     else:
         print("  postgres_password already in Keychain")
 
+    if not get("client_id"):
+        print("  ⚠ client_id not in Keychain — run:")
+        print("      uv run inv keychain-set client_id <value>")
+    else:
+        print("  client_id already in Keychain")
+
     print("\nNext steps:")
-    print("  1. Run:  uv run inv auth          (OAuth browser flow)")
-    print("  2. Run:  uv run inv k8s-seal      (seal all secrets for k8s)")
-    print("  3. Run:  kubectl apply -f k8s/sealed/")
+    print("  1. Run:  uv run inv keychain-set client_id <value>  (if not already set)")
+    print("  2. Run:  uv run inv auth          (OAuth browser flow)")
+    print("  3. Run:  uv run inv k8s-seal      (seal all secrets for k8s)")
+    print("  4. Run:  kubectl apply -f k8s/sealed/")
 
 
 # ── OAuth ────────────────────────────────────────────────────────────────────
@@ -132,10 +139,16 @@ def k8s_seal(c):
 
     sealed_any = False
 
-    # OAuth token
+    # OAuth token + client_id (both OAuth-related, sealed together)
     tokens_json = get("oauth_tokens")
+    client_id = get("client_id")
     if tokens_json:
-        _seal_secret("rh-tokens", {"rh_tokens.json": tokens_json})
+        rh_data = {"rh_tokens.json": tokens_json}
+        if client_id:
+            rh_data["client_id"] = client_id
+        else:
+            print("  ⚠ client_id not in Keychain — ROBINHOOD_CLIENT_ID won't be set in k8s")
+        _seal_secret("rh-tokens", rh_data)
         sealed_any = True
     else:
         print("  ⚠ oauth_tokens not in Keychain — run 'inv auth' first")
