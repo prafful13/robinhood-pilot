@@ -25,8 +25,9 @@ bazel-*
 # macOS
 .DS_Store
 
-# Claude Code local session settings
+# Claude Code local session settings and project notes
 .claude/
+CLAUDE.md
 
 # Sealed Secrets — these are cryptographically safe to commit (encrypted with
 # your cluster's public key), but kept out of this repo by preference.
