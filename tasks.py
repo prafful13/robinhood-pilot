@@ -22,7 +22,6 @@ Workflow (first time):
 from __future__ import annotations
 
 import base64
-import json
 import tempfile
 from pathlib import Path
 
@@ -31,8 +30,6 @@ from invoke import task
 
 PROJECT = Path(__file__).parent.resolve()
 VENV_PYTHON = PROJECT / ".venv" / "bin" / "python"
-VENV_STREAMLIT = PROJECT / ".venv" / "bin" / "streamlit"
-LOGS = PROJECT / "logs"
 
 NS = "robinhood-trader"
 SEALED_DIR = PROJECT / "k8s" / "sealed"
@@ -294,82 +291,3 @@ def k8s_delete(c):
     print("✓ All resources deleted (namespace kept; re-apply SealedSecrets before redeploying)")
 
 
-# ── launchd (kept for reference; k8s is the preferred deployment) ─────────────
-
-PLIST_DIR = Path.home() / "Library" / "LaunchAgents"
-BOT_LABEL = "com.robinhoodtrader.bot"
-DASH_LABEL = "com.robinhoodtrader.dashboard"
-
-
-def _plist_content(label: str, args: list[str], log_name: str) -> str:
-    args_xml = "\n".join(f"        <string>{a}</string>" for a in args)
-    return f"""<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>{label}</string>
-    <key>ProgramArguments</key>
-    <array>
-{args_xml}
-    </array>
-    <key>WorkingDirectory</key>
-    <string>{PROJECT}</string>
-    <key>KeepAlive</key>
-    <dict><key>Crashed</key><true/></dict>
-    <key>ThrottleInterval</key>
-    <integer>60</integer>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>{LOGS}/{log_name}.log</string>
-    <key>StandardErrorPath</key>
-    <string>{LOGS}/{log_name}.error.log</string>
-</dict>
-</plist>
-"""
-
-
-@task(name="svc-install")
-def svc_install(c):
-    """Install bot + dashboard as macOS launchd services (legacy; prefer k8s)."""
-    LOGS.mkdir(exist_ok=True)
-    for label, args, name in (
-        (BOT_LABEL, [str(VENV_PYTHON), str(PROJECT / "main.py")], "bot"),
-        (DASH_LABEL, [str(VENV_STREAMLIT), "run", str(PROJECT / "dashboard.py"),
-                      "--server.port=8501", "--server.headless=true",
-                      "--browser.gatherUsageStats=false"], "dashboard"),
-    ):
-        dest = PLIST_DIR / f"{label}.plist"
-        dest.write_text(_plist_content(label, args, name))
-        c.run(f"launchctl load {dest}")
-        print(f"  loaded {dest}")
-    print("✓ Services installed")
-
-
-@task(name="svc-uninstall")
-def svc_uninstall(c):
-    """Remove launchd services entirely."""
-    for label in (BOT_LABEL, DASH_LABEL):
-        plist = PLIST_DIR / f"{label}.plist"
-        c.run(f"launchctl unload {plist}", warn=True)
-        plist.unlink(missing_ok=True)
-    print("✓ Services removed")
-
-
-@task(name="svc-start")
-def svc_start(c):
-    c.run(f"launchctl start {BOT_LABEL}")
-    c.run(f"launchctl start {DASH_LABEL}")
-
-
-@task(name="svc-stop")
-def svc_stop(c):
-    c.run(f"launchctl stop {BOT_LABEL}", warn=True)
-    c.run(f"launchctl stop {DASH_LABEL}", warn=True)
-
-
-@task(name="svc-restart")
-def svc_restart(c):
-    svc_stop(c)
-    svc_start(c)

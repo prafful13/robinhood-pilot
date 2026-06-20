@@ -33,8 +33,3 @@ broker:
   scope: "internal"
   resource: "https://agent.robinhood.com/mcp/trading"
 
-database:
-  name: robinhood_trader
-  user: trader
-  host: localhost   # for local dev (after port-forward); k8s uses DB_URL env var
-  port: 5432
