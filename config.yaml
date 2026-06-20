@@ -29,7 +29,6 @@ broker:
   mcp_url: "https://agent.robinhood.com/mcp/trading"
   auth_url: "https://robinhood.com/oauth"
   token_url: "https://api.robinhood.com/oauth2/token/"
-  client_id: "ROBINHOOD_AGENTIC_CLIENT_ID"
   redirect_uri: "http://localhost:3118/callback"
   scope: "internal"
   resource: "https://agent.robinhood.com/mcp/trading"

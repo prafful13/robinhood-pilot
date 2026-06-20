@@ -25,6 +25,8 @@ import httpx
 from aiohttp import web
 
 KEYCHAIN_KEY = "oauth_tokens"
+# Public OAuth client ID for Robinhood's Agentic/Claude MCP integration (PKCE, no secret)
+_CLIENT_ID = "ROBINHOOD_AGENTIC_CLIENT_ID"
 
 
 def _is_in_cluster() -> bool:
@@ -160,7 +162,7 @@ async def get_access_token(cfg: dict) -> str:
 
     if tokens and tokens.get("refresh_token") and _is_expired(tokens):
         try:
-            fresh = await _refresh_access_token(token_url, cfg["client_id"], tokens["refresh_token"])
+            fresh = await _refresh_access_token(token_url, cfg.get("client_id", _CLIENT_ID), tokens["refresh_token"])
             _save_tokens(fresh)
             return fresh["access_token"]
         except Exception:
@@ -172,7 +174,7 @@ async def get_access_token(cfg: dict) -> str:
 
     params = {
         "response_type": "code",
-        "client_id": cfg["client_id"],
+        "client_id": cfg.get("client_id", _CLIENT_ID),
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
         "redirect_uri": cfg["redirect_uri"],
@@ -187,7 +189,7 @@ async def get_access_token(cfg: dict) -> str:
 
     code, _ = await _run_callback_server(state)
     tokens = await _exchange_code(
-        token_url, cfg["client_id"], cfg["redirect_uri"], code, code_verifier
+        token_url, cfg.get("client_id", _CLIENT_ID), cfg["redirect_uri"], code, code_verifier
     )
     _save_tokens(tokens)
     print("Authentication successful. Token saved to macOS Keychain.")
