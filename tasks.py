@@ -4,19 +4,25 @@ Usage:
     uv run inv <task>    # no venv activation needed
     inv <task>           # with venv activated
 
-Secrets:   keychain-set, keychain-get, secrets-init, k8s-seal
-Local dev: auth, bot, dashboard, build, lock-update
-Postgres:  k8s-postgres, k8s-psql
-Containers: docker-build, k8s-apply, k8s-status, k8s-logs, k8s-restart, k8s-delete
+Secrets:    keychain-set, keychain-get, secrets-init, k8s-seal
+Local dev:  auth, bot, dashboard, build, lock-update
+Postgres:   k8s-psql  (provisioned externally via k3s-dev)
+Containers: docker-build, k8s-apply, k8s-status, k8s-logs, k8s-stop, k8s-start, k8s-restart, k8s-delete
 
 Workflow (first time):
-  1. uv run inv secrets-init        # generate + store postgres password in Keychain
-  2. uv run inv auth                # OAuth → token stored in Keychain
-  3. kubectl apply -f k8s/namespace.yaml
-  4. uv run inv k8s-seal            # Keychain → SealedSecret YAMLs in k8s/sealed/
-  5. kubectl apply -f k8s/sealed/   # SealedSecrets → k8s Secrets (via controller)
-  6. uv run inv docker-build
-  7. uv run inv k8s-apply           # namespace, configmap, postgres, bot, dashboard
+  1. k3s-dev init --skip-postgres          # bootstrap Sealed Secrets controller
+  2. k3s-dev namespace add robinhood-trader
+  3. k3s-dev postgres add robinhood \\
+       --namespace robinhood-trader \\
+       --user trader \\
+       --db robinhood_trader \\
+       --secret-name postgres-credentials \\
+       --backup
+  4. uv run inv auth                       # OAuth → token stored in Keychain
+  5. uv run inv k8s-seal                   # Keychain → k8s/sealed/rh-tokens.yaml
+  6. kubectl apply -f k8s/sealed/
+  7. uv run inv docker-build
+  8. uv run inv k8s-apply
 """
 
 from __future__ import annotations
@@ -58,29 +64,22 @@ def keychain_get(c, key):
 
 @task(name="secrets-init")
 def secrets_init(c):
-    """Generate and store all app secrets in Keychain (run once on first setup).
-    Skips any key that already exists."""
-    import secrets as py_secrets
-    from vault.keychain import get, set as kc_set
-
-    if not get("postgres_password"):
-        pg_pass = py_secrets.token_urlsafe(32)
-        kc_set("postgres_password", pg_pass)
-        print("✓ postgres_password generated and stored in Keychain")
-    else:
-        print("  postgres_password already in Keychain")
+    """Check OAuth secrets in Keychain. Postgres is managed by k3s-dev."""
+    from vault.keychain import get
 
     if not get("client_id"):
         print("  ⚠ client_id not in Keychain — run:")
         print("      uv run inv keychain-set client_id <value>")
     else:
-        print("  client_id already in Keychain")
+        print("  ✓ client_id in Keychain")
 
     print("\nNext steps:")
-    print("  1. Run:  uv run inv keychain-set client_id <value>  (if not already set)")
-    print("  2. Run:  uv run inv auth          (OAuth browser flow)")
-    print("  3. Run:  uv run inv k8s-seal      (seal all secrets for k8s)")
-    print("  4. Run:  kubectl apply -f k8s/sealed/")
+    print("  1. uv run inv keychain-set client_id <value>  (if not set)")
+    print("  2. uv run inv auth          (OAuth browser flow)")
+    print("  3. uv run inv k8s-seal      (seal rh-tokens for k8s)")
+    print("  4. kubectl apply -f k8s/sealed/")
+    print()
+    print("Postgres is provisioned by k3s-dev — see workflow in tasks.py header.")
 
 
 # ── OAuth ────────────────────────────────────────────────────────────────────
@@ -131,40 +130,27 @@ def _seal_secret(name: str, data: dict[str, str]) -> None:
 
 @task(name="k8s-seal")
 def k8s_seal(c):
-    """Read all secrets from Keychain → produce SealedSecret YAMLs in k8s/sealed/.
-    These YAML files are safe to commit to git.
-    Apply them with: kubectl apply -f k8s/sealed/
+    """Seal OAuth tokens → k8s/sealed/rh-tokens.yaml.
+    Postgres credentials are a direct k8s Secret managed by k3s-dev (no sealing needed).
+    Apply with: kubectl apply -f k8s/sealed/
     """
     from vault.keychain import get
 
-    sealed_any = False
-
-    # OAuth token + client_id (both OAuth-related, sealed together)
     tokens_json = get("oauth_tokens")
     client_id = get("client_id")
-    if tokens_json:
-        rh_data = {"rh_tokens.json": tokens_json}
-        if client_id:
-            rh_data["client_id"] = client_id
-        else:
-            print("  ⚠ client_id not in Keychain — ROBINHOOD_CLIENT_ID won't be set in k8s")
-        _seal_secret("rh-tokens", rh_data)
-        sealed_any = True
-    else:
+    if not tokens_json:
         print("  ⚠ oauth_tokens not in Keychain — run 'inv auth' first")
+        return
 
-    # Postgres credentials
-    pg_pass = get("postgres_password")
-    if pg_pass:
-        db_url = f"postgresql+psycopg2://trader:{pg_pass}@postgres:5432/robinhood_trader"
-        _seal_secret("postgres-credentials", {"password": pg_pass, "db_url": db_url})
-        sealed_any = True
+    rh_data = {"rh_tokens.json": tokens_json}
+    if client_id:
+        rh_data["client_id"] = client_id
     else:
-        print("  ⚠ postgres_password not in Keychain — run 'inv secrets-init' first")
+        print("  ⚠ client_id not in Keychain — ROBINHOOD_CLIENT_ID won't be set in k8s")
+    _seal_secret("rh-tokens", rh_data)
 
-    if sealed_any:
-        print("\nApply with:")
-        print(f"  kubectl apply -f k8s/sealed/")
+    print("\nApply with:")
+    print("  kubectl apply -f k8s/sealed/")
 
 
 # ── Dev server tasks ─────────────────────────────────────────────────────────
@@ -213,40 +199,30 @@ def k8s_load_images(c):
     print("✓ Images loaded into k3s")
 
 
-@task(name="k8s-postgres")
-def k8s_postgres(c):
-    """Deploy PostgreSQL to k3s (requires postgres-credentials SealedSecret already applied)."""
-    c.run("kubectl apply -f k8s/postgres-pvc.yaml")
-    c.run("kubectl apply -f k8s/postgres-deployment.yaml")
-    c.run("kubectl apply -f k8s/postgres-service.yaml")
-    print(f"✓ PostgreSQL deploying in namespace '{NS}'")
-    print("  Watch:       kubectl get pods -n robinhood-trader -l app=postgres")
-    print("  Local access: inv k8s-psql")
-
-
 @task(name="k8s-psql")
 def k8s_psql(c):
-    """Open a psql shell to the in-cluster PostgreSQL (via port-forward)."""
-    from vault.keychain import get
-    pg_pass = get("postgres_password") or ""
-    print("Starting port-forward on localhost:5432 → postgres:5432 ...")
-    print("Connecting as trader@robinhood_trader ...")
-    c.run(
-        f"kubectl port-forward svc/postgres 5432:5432 -n {NS} &"
-        f" sleep 2 && PGPASSWORD={pg_pass!r} psql -h localhost -U trader -d robinhood_trader",
-        pty=True,
-        warn=True,
-    )
+    """Open a psql shell to Postgres (NodePort managed by k3s-dev)."""
+    import json
+    import keyring
+    state_file = Path.home() / ".k3s-dev" / "state.json"
+    if not state_file.exists():
+        print("k3s-dev state not found — provision postgres first:")
+        print("  k3s-dev postgres add robinhood --namespace robinhood-trader \\")
+        print("    --user trader --db robinhood_trader --secret-name postgres-credentials --backup")
+        return
+    inst = json.loads(state_file.read_text()).get("postgres_instances", {}).get("robinhood", {})
+    port = inst.get("node_port", 30432)
+    pw = keyring.get_password("k3s-dev", "postgres/robinhood") or ""
+    c.run(f"PGPASSWORD={pw!r} psql -h localhost -p {port} -U trader -d robinhood_trader", pty=True)
 
 
 @task(name="k8s-apply")
 def k8s_apply(c):
     """Apply all Kubernetes manifests.
-    Prerequisite: kubectl apply -f k8s/sealed/  (SealedSecrets must exist first)
+    Prerequisites:
+      - k3s-dev postgres add robinhood ... (postgres-credentials Secret must exist)
+      - kubectl apply -f k8s/sealed/       (rh-tokens SealedSecret must exist)
     """
-    # Namespace
-    c.run("kubectl apply -f k8s/namespace.yaml")
-
     # ConfigMap from config.yaml
     c.run(
         f"kubectl create configmap trader-config "
@@ -255,11 +231,6 @@ def k8s_apply(c):
         f"--dry-run=client -o yaml | kubectl apply -f -"
     )
 
-    # PostgreSQL
-    c.run("kubectl apply -f k8s/postgres-pvc.yaml")
-    c.run("kubectl apply -f k8s/postgres-deployment.yaml")
-    c.run("kubectl apply -f k8s/postgres-service.yaml")
-
     # Logs PVC
     c.run("kubectl apply -f k8s/logs-pvc.yaml")
 
@@ -267,7 +238,7 @@ def k8s_apply(c):
     for manifest in ("bot-deployment.yaml", "dashboard-deployment.yaml", "dashboard-service.yaml"):
         c.run(f"kubectl apply -f k8s/{manifest}")
 
-    print(f"\n✓ All manifests applied to namespace '{NS}'")
+    print(f"\n✓ Manifests applied to namespace '{NS}'")
     print("  Dashboard:    http://localhost:30501")
     print("  Watch:        inv k8s-status")
 
@@ -349,6 +320,22 @@ def k8s_logs_pull(c, dest="./bot-logs"):
     subprocess.run(["ls", "-lh", dest])
 
 
+@task(name="k8s-stop")
+def k8s_stop(c):
+    """Scale bot and dashboard to 0 replicas (preserves PVCs and Secrets)."""
+    c.run(f"kubectl scale deployment/robinhood-bot       --replicas=0 -n {NS}")
+    c.run(f"kubectl scale deployment/robinhood-dashboard --replicas=0 -n {NS}")
+    print("✓ Bot and dashboard stopped (postgres untouched)")
+
+
+@task(name="k8s-start")
+def k8s_start(c):
+    """Scale bot and dashboard back to 1 replica each."""
+    c.run(f"kubectl scale deployment/robinhood-bot       --replicas=1 -n {NS}")
+    c.run(f"kubectl scale deployment/robinhood-dashboard --replicas=1 -n {NS}")
+    c.run(f"kubectl rollout status deployment/robinhood-bot -n {NS}")
+
+
 @task(name="k8s-restart")
 def k8s_restart(c):
     """Rolling restart of both application deployments."""
@@ -359,28 +346,20 @@ def k8s_restart(c):
 
 @task(name="k8s-backup-now")
 def k8s_backup_now(c):
-    """Trigger an immediate pg_dump backup (runs the CronJob as a one-off Job)."""
-    import time as _time
-    job_name = f"postgres-backup-manual-{int(_time.time())}"
-    c.run(
-        f"kubectl create job {job_name} "
-        f"--from=cronjob/postgres-backup "
-        f"-n {NS}"
-    )
-    print(f"✓ Backup job '{job_name}' started")
-    print(f"  Watch: kubectl logs job/{job_name} -n {NS} -f")
+    """Trigger an immediate Postgres backup (delegated to k3s-dev)."""
+    c.run("k3s-dev postgres backup robinhood")
 
 
 @task(name="k8s-backup-ls")
 def k8s_backup_ls(c):
-    """List all database backups on the backup PVC with sizes."""
+    """List all database backups on the backup PVC."""
     result = c.run(
-        f"kubectl get pod -n {NS} -l app=postgres -o jsonpath='{{.items[0].metadata.name}}'",
+        f"kubectl get pod -n {NS} -l app=robinhood -o jsonpath='{{.items[0].metadata.name}}'",
         hide=True, warn=True,
     )
     pod = result.stdout.strip()
     if not pod:
-        print("Postgres pod not found.")
+        print("Postgres pod not found — check: kubectl get pods -n robinhood-trader")
         return
     c.run(
         f"kubectl exec {pod} -n {NS} -- "
@@ -389,32 +368,12 @@ def k8s_backup_ls(c):
     )
 
 
-@task(name="k8s-backup-restore")
-def k8s_backup_restore(c, file):
-    """Restore the database from a named backup file on the PVC.
-    Usage: inv k8s-backup-restore --file robinhood_trader_20260619_050000.sql.gz
-    WARNING: drops and recreates all tables.
-    """
-    from vault.keychain import get
-    pg_pass = get("postgres_password") or ""
-    print(f"⚠ Restoring from /backups/{file} — this will OVERWRITE the current database.")
-    confirm = input("Type 'yes' to continue: ")
-    if confirm.strip() != "yes":
-        print("Aborted.")
-        return
-    c.run(
-        f"kubectl port-forward svc/postgres 5432:5432 -n {NS} &"
-        f" sleep 2 && PGPASSWORD={pg_pass!r} "
-        f"sh -c 'kubectl exec -n {NS} deployment/postgres -- "
-        f"sh -c \"gunzip -c /backups/{file} | psql -U trader robinhood_trader\"'",
-        warn=True, pty=True,
-    )
-
-
 @task(name="k8s-delete")
 def k8s_delete(c):
-    """Delete all resources in the namespace (keeps the namespace and SealedSecrets)."""
-    c.run(f"kubectl delete deployments,services,pvc,configmap,secret --all -n {NS}", warn=True)
-    print("✓ All resources deleted (namespace kept; re-apply SealedSecrets before redeploying)")
+    """Delete app resources (bot, dashboard, configmap). Postgres is owned by k3s-dev."""
+    for resource in ("deployment/robinhood-bot", "deployment/robinhood-dashboard",
+                     "service/robinhood-dashboard", "pvc/bot-logs", "configmap/trader-config"):
+        c.run(f"kubectl delete {resource} -n {NS} --ignore-not-found", warn=True)
+    print("✓ App resources deleted (postgres untouched — use: k3s-dev postgres remove robinhood)")
 
 

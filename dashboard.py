@@ -1,31 +1,99 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta
-
-import pytz
-
-ET = pytz.timezone("America/New_York")  # bot stores all timestamps in ET
-
-
-def _to_local(dt: datetime | None) -> datetime | None:
-    """Convert an ET-naive datetime to the display timezone (naive)."""
-    if dt is None:
-        return None
-    return ET.localize(dt).astimezone(_LOCAL_TZ).replace(tzinfo=None)
-
 from types import SimpleNamespace
 
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import pytz
 import streamlit as st
 import yaml
 
-from db.database import SessionLocal, init_db, init_runtime_config
-from db.models import BotControl, BotStatus, PortfolioSnapshot, RuntimeConfig, Trade
-from tax.calculator import compute as compute_tax
+ET = pytz.timezone("America/New_York")
 
-init_db()  # ensure all tables exist (including BotStatus, PortfolioSnapshot)
+DEMO_MODE = os.getenv("DEMO_MODE") == "1"
+
+
+def _to_local(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    return ET.localize(dt).astimezone(_LOCAL_TZ).replace(tzinfo=None)
+
+
+# ── Demo data (only used when DEMO_MODE=1) ────────────────────────────────────
+
+def _demo_snapshots() -> pd.DataFrame:
+    import numpy as np
+    rng = pd.date_range(end=datetime.now(), periods=200, freq="2h")
+    equity = 1000.0
+    rows = []
+    for ts in rng:
+        equity += np.random.normal(0.8, 4.5)
+        equity = max(900, equity)
+        rows.append({"recorded_at": ts.replace(tzinfo=None), "equity": round(equity, 2),
+                     "cash": round(equity * 0.35, 2), "portfolio_value": round(equity * 0.65, 2)})
+    return pd.DataFrame(rows)
+
+
+def _demo_trades() -> pd.DataFrame:
+    import numpy as np
+    symbols = ["AAPL", "NVDA", "GOOGL", "AVGO", "XLE"]
+    rows = []
+    now = datetime.now()
+    for i in range(28):
+        sym = symbols[i % len(symbols)]
+        price = {"AAPL": 212.4, "NVDA": 138.7, "GOOGL": 195.3, "AVGO": 248.1, "XLE": 93.8}[sym]
+        price += np.random.normal(0, price * 0.015)
+        side = "buy" if i % 2 == 0 else "sell"
+        qty = round(np.random.uniform(0.5, 1.4), 4)
+        pnl = round(np.random.normal(3.2, 8.5), 2) if side == "sell" else 0.0
+        rows.append({
+            "id": i + 1, "symbol": sym, "side": side,
+            "quantity": qty, "price": round(price, 2),
+            "dollar_amount": round(qty * price, 2),
+            "trade_date": (now - timedelta(days=i * 1.3)).date(),
+            "executed_at": now - timedelta(days=i * 1.3, hours=2),
+            "rsi_at_signal": round(np.random.uniform(24, 36) if side == "buy" else np.random.uniform(68, 78), 1),
+            "realized_pnl": pnl, "holding_days": np.random.randint(1, 5) if side == "sell" else None,
+            "cost_basis": round(qty * price * 0.98, 2) if side == "sell" else None,
+            "order_id": f"demo-{1000+i}",
+        })
+    return pd.DataFrame(rows)
+
+
+def _demo_bot_status() -> SimpleNamespace:
+    now_et = datetime.now(ET).replace(tzinfo=None)
+    return SimpleNamespace(
+        last_cycle_at=now_et - timedelta(minutes=3),
+        token_expires_at=now_et + timedelta(days=6, hours=4),
+        token_saved_at=now_et - timedelta(days=0, hours=18),
+        last_error=None,
+    )
+
+
+def _demo_bot_control() -> SimpleNamespace:
+    return SimpleNamespace(paused=False, paused_at=None)
+
+
+def _demo_runtime_config() -> SimpleNamespace:
+    return SimpleNamespace(
+        strategy="rsi_mean_reversion", rsi_period=14, oversold=30, overbought=70,
+        macd_fast=12, macd_slow=26, macd_signal_period=9,
+        bb_period=20, bb_std_dev=2.0,
+        max_trade_usd=300.0, max_positions=5, daily_loss_limit_usd=50.0,
+        updated_at=datetime.now(ET).replace(tzinfo=None) - timedelta(hours=2),
+    )
+
+
+# ── DB-backed loaders (skipped in demo mode) ─────────────────────────────────
+
+if not DEMO_MODE:
+    from db.database import SessionLocal, init_db, init_runtime_config
+    from db.models import BotControl, BotStatus, PortfolioSnapshot, RuntimeConfig, Trade
+    from tax.calculator import compute as compute_tax
+    init_db()
 
 st.set_page_config(
     page_title="Prafful's Sick of Trading",
@@ -44,6 +112,9 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+if DEMO_MODE:
+    st.info("**Demo mode** — showing simulated data. Set `DEMO_MODE=1` to reproduce.", icon="🎬")
+
 REFRESH_SECS = 60
 
 PERIOD_OPTIONS = {
@@ -59,12 +130,24 @@ PERIOD_OPTIONS = {
 
 @st.cache_data(ttl=REFRESH_SECS)
 def load_config() -> dict:
+    if DEMO_MODE:
+        return {
+            "account_number": "DEMO0001", "display_timezone": "America/Los_Angeles",
+            "watchlist": ["GOOGL", "AAPL", "NVDA", "AVGO", "XLE"],
+            "strategy": {"rsi_period": 14, "oversold": 30, "overbought": 70,
+                         "macd_fast": 12, "macd_slow": 26, "macd_signal_period": 9,
+                         "bb_period": 20, "bb_std_dev": 2.0},
+            "risk": {"max_trade_usd": 300, "max_positions": 5, "daily_loss_limit_usd": 50},
+            "tax": {"short_term_rate": 0.24, "long_term_rate": 0.15},
+        }
     with open("config.yaml") as f:
         return yaml.safe_load(f)
 
 
 @st.cache_data(ttl=REFRESH_SECS)
 def load_trades() -> pd.DataFrame:
+    if DEMO_MODE:
+        return _demo_trades()
     init_db()
     with SessionLocal() as db:
         rows = db.query(Trade).order_by(Trade.executed_at.desc()).all()
@@ -82,6 +165,8 @@ def load_trades() -> pd.DataFrame:
 
 @st.cache_data(ttl=REFRESH_SECS)
 def load_portfolio_snapshots() -> pd.DataFrame:
+    if DEMO_MODE:
+        return _demo_snapshots()
     with SessionLocal() as db:
         rows = db.query(PortfolioSnapshot).order_by(PortfolioSnapshot.recorded_at.asc()).all()
     if not rows:
@@ -95,13 +180,16 @@ def load_portfolio_snapshots() -> pd.DataFrame:
 
 
 def load_bot_control() -> SimpleNamespace:
-    """Not cached — reads current pause state directly each render."""
+    if DEMO_MODE:
+        return _demo_bot_control()
     with SessionLocal() as db:
         ctrl = db.get(BotControl, 1)
         return SimpleNamespace(paused=bool(ctrl and ctrl.paused), paused_at=ctrl.paused_at if ctrl else None)
 
 
 def _request_portfolio_refresh() -> None:
+    if DEMO_MODE:
+        return
     with SessionLocal() as db:
         ctrl = db.get(BotControl, 1)
         if ctrl:
@@ -112,6 +200,8 @@ def _request_portfolio_refresh() -> None:
 
 
 def _set_paused(paused: bool) -> None:
+    if DEMO_MODE:
+        return
     now_et = datetime.now(ET).replace(tzinfo=None)
     with SessionLocal() as db:
         ctrl = db.get(BotControl, 1)
@@ -125,6 +215,8 @@ def _set_paused(paused: bool) -> None:
 
 @st.cache_data(ttl=REFRESH_SECS)
 def load_bot_status() -> SimpleNamespace | None:
+    if DEMO_MODE:
+        return _demo_bot_status()
     with SessionLocal() as db:
         s = db.get(BotStatus, 1)
         if s is None:
@@ -139,11 +231,23 @@ def load_bot_status() -> SimpleNamespace | None:
 
 @st.cache_data(ttl=REFRESH_SECS)
 def load_tax_summary(short_rate: float, long_rate: float):
+    if DEMO_MODE:
+        df = load_trades()
+        sells = df[df["side"] == "sell"] if not df.empty else pd.DataFrame()
+        st_gain = float(sells["realized_pnl"].sum()) if not sells.empty else 42.18
+        lt_gain = 0.0
+        from types import SimpleNamespace as SN
+        by_sym = {sym: {"short_term": float(g["realized_pnl"].sum()), "long_term": 0.0}
+                  for sym, g in sells.groupby("symbol")} if not sells.empty else {}
+        return SN(short_term_gain=st_gain, short_term_tax=round(st_gain*short_rate, 2),
+                  long_term_gain=lt_gain, long_term_tax=0.0,
+                  total_tax=round(st_gain*short_rate, 2), by_symbol=by_sym)
     return compute_tax(short_rate, long_rate)
 
 
 def load_runtime_config() -> SimpleNamespace | None:
-    """Not cached — reads live DB values so form shows current config."""
+    if DEMO_MODE:
+        return _demo_runtime_config()
     with SessionLocal() as db:
         rc = db.get(RuntimeConfig, 1)
     if rc is None:
@@ -174,6 +278,8 @@ def _save_runtime_config(
     bb_period: int, bb_std_dev: float,
     max_trade_usd: float, max_positions: int, daily_loss_limit_usd: float,
 ) -> None:
+    if DEMO_MODE:
+        return
     now_et = datetime.now(ET).replace(tzinfo=None)
     with SessionLocal() as db:
         rc = db.get(RuntimeConfig, 1)
@@ -206,7 +312,8 @@ def _save_runtime_config(
 # ── Sidebar ────────────────────────────────────────────────────────────────
 
 cfg = load_config()
-init_runtime_config(cfg)  # seed DB defaults from config.yaml on first run
+if not DEMO_MODE:
+    init_runtime_config(cfg)
 tax_cfg = cfg["tax"]
 _LOCAL_TZ = pytz.timezone(cfg.get("display_timezone", "America/New_York"))
 _TZ_ABBR = datetime.now(_LOCAL_TZ).strftime("%Z")

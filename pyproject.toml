@@ -20,6 +20,7 @@ dev = [
     "invoke>=2.2.0",
     "keyring>=25.0.0",
     "diagrams>=0.23.0",
+    "playwright>=1.60.0",
 ]
 
 [tool.hatch.build.targets.wheel]

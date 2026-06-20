@@ -34,6 +34,14 @@ Strategy and risk parameters are editable live from the dashboard sidebar — th
 - Dashboard timezone follows `display_timezone` in `config.yaml` (default: `America/Los_Angeles`)
 - Auto-refreshes every 60 seconds; accessible at **http://localhost:30501**
 
+### Dashboard Screenshots
+
+![Dashboard overview](docs/screenshots/dashboard-hero.png)
+
+![Portfolio chart and bot status](docs/screenshots/dashboard-chart.png)
+
+![Trade history and tax breakdown](docs/screenshots/dashboard-trades.png)
+
 ---
 
 ## Architecture
