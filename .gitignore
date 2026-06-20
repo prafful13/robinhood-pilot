@@ -1,0 +1,37 @@
+# Secrets — stored in macOS Keychain; never files on disk
+.rh_tokens.json
+*.token.json
+
+# Local database (replaced by PostgreSQL on k3s)
+trades.db
+*.db
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Bazel
+bazel-*
+.bazel/
+
+# Logs
+logs/
+
+# uv
+.python-version
+
+# macOS
+.DS_Store
+
+# Claude Code local session settings
+.claude/
+
+# Sealed Secrets — these are cryptographically safe to commit (encrypted with
+# your cluster's public key), but kept out of this repo by preference.
+# Run `inv k8s-seal` to regenerate them locally after cloning.
+k8s/sealed/*.yaml

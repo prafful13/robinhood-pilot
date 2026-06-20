@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: robinhood-dashboard
+  namespace: robinhood-trader
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: robinhood-dashboard
+  template:
+    metadata:
+      labels:
+        app: robinhood-dashboard
+    spec:
+      containers:
+        - name: dashboard
+          image: robinhood-dashboard:latest
+          imagePullPolicy: Never
+          env:
+            - name: DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: db_url
+          volumeMounts:
+            - name: trader-config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+          ports:
+            - containerPort: 8501
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "768Mi"
+              cpu: "500m"
+
+      volumes:
+        - name: trader-config
+          configMap:
+            name: trader-config
+
+      restartPolicy: Always

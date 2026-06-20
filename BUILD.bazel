@@ -1,0 +1,31 @@
+load("@rules_python//python:defs.bzl", "py_binary")
+
+py_binary(
+    name = "bot",
+    srcs = ["main.py"],
+    main = "main.py",
+    data = ["config.yaml"],
+    deps = [
+        "//broker",
+        "//db",
+        "//risk",
+        "//strategy",
+        "@pip//pytz",
+        "@pip//pyyaml",
+    ],
+)
+
+py_binary(
+    name = "dashboard",
+    srcs = ["dashboard.py"],
+    main = "dashboard.py",
+    data = ["config.yaml"],
+    deps = [
+        "//db",
+        "//tax",
+        "@pip//pandas",
+        "@pip//plotly",
+        "@pip//pyyaml",
+        "@pip//streamlit",
+    ],
+)

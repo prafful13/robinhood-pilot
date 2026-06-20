@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: robinhood-bot
+  namespace: robinhood-trader
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: robinhood-bot
+  template:
+    metadata:
+      labels:
+        app: robinhood-bot
+    spec:
+      # Copy token from (read-only) Secret → emptyDir so the bot can refresh and write back.
+      initContainers:
+        - name: token-init
+          image: busybox:latest
+          command:
+            - sh
+            - -c
+            - |
+              if [ ! -f /token/rh_tokens.json ]; then
+                echo "Seeding token from Secret..."
+                cp /secrets/rh_tokens.json /token/rh_tokens.json
+              else
+                echo "Token already present — skipping seed"
+              fi
+          volumeMounts:
+            - name: rh-tokens-secret
+              mountPath: /secrets
+              readOnly: true
+            - name: token-writable
+              mountPath: /token
+
+      containers:
+        - name: bot
+          image: robinhood-bot:latest
+          imagePullPolicy: Never
+          env:
+            - name: TOKEN_FILE
+              value: /token/rh_tokens.json
+            - name: DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: db_url
+          volumeMounts:
+            - name: token-writable
+              mountPath: /token
+            - name: trader-config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+      volumes:
+        - name: rh-tokens-secret
+          secret:
+            secretName: rh-tokens
+        - name: token-writable
+          emptyDir: {}
+        - name: trader-config
+          configMap:
+            name: trader-config
+
+      restartPolicy: Always

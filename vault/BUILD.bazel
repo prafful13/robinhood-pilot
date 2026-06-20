@@ -1,0 +1,8 @@
+py_library(
+    name = "vault",
+    srcs = glob(["*.py"]),
+    visibility = ["//visibility:public"],
+    deps = [
+        requirement("keyring"),
+    ],
+)

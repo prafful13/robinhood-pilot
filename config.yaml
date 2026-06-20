@@ -1,0 +1,40 @@
+account_number: "YOUR_ACCOUNT_NUMBER"   # find in Robinhood → Account → Account number
+
+watchlist:
+  - GOOGL
+  - AAPL
+  - NVDA
+  - AVGO
+  - CRWV
+  - XLE
+
+strategy:
+  rsi_period: 14
+  oversold: 30
+  overbought: 70
+  bar_interval: "15minute"
+  lookback_days: 7
+
+risk:
+  max_trade_usd: 300.0
+  max_positions: 5
+  daily_loss_limit_usd: 50.0
+
+tax:
+  short_term_rate: 0.24
+  long_term_rate: 0.15
+
+broker:
+  mcp_url: "https://agent.robinhood.com/mcp/trading"
+  auth_url: "https://robinhood.com/oauth"
+  token_url: "https://api.robinhood.com/oauth2/token/"
+  client_id: "ROBINHOOD_AGENTIC_CLIENT_ID"
+  redirect_uri: "http://localhost:3118/callback"
+  scope: "internal"
+  resource: "https://agent.robinhood.com/mcp/trading"
+
+database:
+  name: robinhood_trader
+  user: trader
+  host: localhost   # for local dev (after port-forward); k8s uses DB_URL env var
+  port: 5432

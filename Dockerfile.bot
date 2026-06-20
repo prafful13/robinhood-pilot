@@ -1,0 +1,21 @@
+FROM python:3.13-slim
+
+WORKDIR /app
+
+# Install deps first — cached unless requirements.lock changes
+COPY requirements.lock .
+RUN pip install --no-cache-dir -r requirements.lock
+
+# Application code
+COPY broker/   broker/
+COPY strategy/ strategy/
+COPY risk/     risk/
+COPY db/       db/
+COPY tax/      tax/
+COPY vault/    vault/
+COPY main.py   .
+
+# TOKEN_FILE and DB_URL are injected at runtime via k8s Secrets (see k8s/bot-deployment.yaml)
+ENV TOKEN_FILE=/token/rh_tokens.json
+
+CMD ["python", "main.py"]

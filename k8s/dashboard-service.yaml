@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: robinhood-dashboard
+  namespace: robinhood-trader
+spec:
+  selector:
+    app: robinhood-dashboard
+  ports:
+    - port: 8501
+      targetPort: 8501
+      nodePort: 30501
+  type: NodePort   # accessible at http://localhost:30501 from your Mac

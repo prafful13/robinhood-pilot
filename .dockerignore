@@ -1,0 +1,10 @@
+.venv/
+.bazel*
+bazel-*
+__pycache__/
+*.pyc
+.rh_tokens.json
+trades.db
+logs/
+.git/
+.env
