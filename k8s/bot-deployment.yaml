@@ -46,9 +46,13 @@ spec:
                 secretKeyRef:
                   name: postgres-credentials
                   key: db_url
+            - name: LOG_DIR
+              value: /logs
           volumeMounts:
             - name: token-writable
               mountPath: /token
+            - name: bot-logs
+              mountPath: /logs
             - name: trader-config
               mountPath: /app/config.yaml
               subPath: config.yaml
@@ -66,6 +70,9 @@ spec:
             secretName: rh-tokens
         - name: token-writable
           emptyDir: {}
+        - name: bot-logs
+          persistentVolumeClaim:
+            claimName: bot-logs
         - name: trader-config
           configMap:
             name: trader-config

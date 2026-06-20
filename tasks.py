@@ -247,6 +247,9 @@ def k8s_apply(c):
     c.run("kubectl apply -f k8s/postgres-deployment.yaml")
     c.run("kubectl apply -f k8s/postgres-service.yaml")
 
+    # Logs PVC
+    c.run("kubectl apply -f k8s/logs-pvc.yaml")
+
     # Application deployments
     for manifest in ("bot-deployment.yaml", "dashboard-deployment.yaml", "dashboard-service.yaml"):
         c.run(f"kubectl apply -f k8s/{manifest}")
@@ -264,7 +267,7 @@ def k8s_status(c):
 
 @task(name="k8s-logs")
 def k8s_logs(c):
-    """Stream logs from the trading bot pod."""
+    """Stream live bot logs via kubectl (stdout only — last ~2 MiB of in-memory buffer)."""
     result = c.run(
         f"kubectl get pod -n {NS} -l app=robinhood-bot -o jsonpath='{{.items[0].metadata.name}}'",
         hide=True, warn=True,
@@ -274,6 +277,41 @@ def k8s_logs(c):
         print("Bot pod not found. Is it running? Check: inv k8s-status")
         return
     c.run(f"kubectl logs -f {pod} -n {NS}", pty=True)
+
+
+@task(name="k8s-logs-file")
+def k8s_logs_file(c, date=""):
+    """Read persisted bot log files from the PVC (full history, daily rotation).
+    Usage:
+      inv k8s-logs-file            # tail today's log
+      inv k8s-logs-file --date 2026-06-19   # read a specific day
+    """
+    result = c.run(
+        f"kubectl get pod -n {NS} -l app=robinhood-bot -o jsonpath='{{.items[0].metadata.name}}'",
+        hide=True, warn=True,
+    )
+    pod = result.stdout.strip()
+    if not pod:
+        print("Bot pod not found.")
+        return
+    if date:
+        c.run(f"kubectl exec {pod} -n {NS} -- cat /logs/bot.log.{date}", pty=True, warn=True)
+    else:
+        c.run(f"kubectl exec {pod} -n {NS} -- tail -f /logs/bot.log", pty=True)
+
+
+@task(name="k8s-logs-ls")
+def k8s_logs_ls(c):
+    """List all rotated log files on the PVC with sizes."""
+    result = c.run(
+        f"kubectl get pod -n {NS} -l app=robinhood-bot -o jsonpath='{{.items[0].metadata.name}}'",
+        hide=True, warn=True,
+    )
+    pod = result.stdout.strip()
+    if not pod:
+        print("Bot pod not found.")
+        return
+    c.run(f"kubectl exec {pod} -n {NS} -- ls -lh /logs/", pty=True)
 
 
 @task(name="k8s-restart")

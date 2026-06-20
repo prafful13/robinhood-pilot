@@ -4,12 +4,15 @@ Trading bot main loop.
   - Runs every 15 minutes during market hours (9:30–16:00 ET, Mon–Fri)
   - Fetches RSI signals for the watchlist
   - Applies risk checks, then places orders
-  - Persists every trade to SQLite
+  - Persists every trade to PostgreSQL
 """
 
 import asyncio
 import logging
-from datetime import date, datetime
+import os
+from datetime import datetime
+from logging.handlers import TimedRotatingFileHandler
+from pathlib import Path
 
 import pytz
 import yaml
@@ -20,11 +23,36 @@ from db.models import Trade
 from risk.manager import RiskManager
 from strategy.rsi import RSIMeanReversion
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-7s  %(message)s",
-    datefmt="%H:%M:%S",
-)
+_LOG_FMT = "%(asctime)s  %(levelname)-7s  %(message)s"
+_LOG_DATE = "%Y-%m-%d %H:%M:%S"
+
+
+def _setup_logging() -> None:
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+
+    # Stdout — always present so `kubectl logs` works
+    stream = logging.StreamHandler()
+    stream.setFormatter(logging.Formatter(_LOG_FMT, _LOG_DATE))
+    root.addHandler(stream)
+
+    # Daily-rotating file on PVC — active when LOG_DIR is mounted
+    log_dir = Path(os.environ.get("LOG_DIR", "/logs"))
+    if log_dir.exists():
+        log_dir.mkdir(parents=True, exist_ok=True)
+        file_handler = TimedRotatingFileHandler(
+            log_dir / "bot.log",
+            when="midnight",
+            backupCount=100,   # keep ~100 daily files; 10Gi PVC is the hard cap
+            encoding="utf-8",
+            utc=True,
+        )
+        file_handler.setFormatter(logging.Formatter(_LOG_FMT, _LOG_DATE))
+        root.addHandler(file_handler)
+        logging.getLogger(__name__).info(f"File logging active: {log_dir}/bot.log")
+
+
+_setup_logging()
 log = logging.getLogger(__name__)
 
 ET = pytz.timezone("America/New_York")
