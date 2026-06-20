@@ -38,22 +38,7 @@ Strategy and risk parameters are editable live from the dashboard sidebar — th
 
 ## Architecture
 
-```
-macOS Keychain  ──► inv k8s-seal ──► k8s/sealed/*.yaml (gitignored)
-                                           │
-                                    kubeseal encrypts
-                                           │
-                                           ▼
-                               k3s: Sealed Secrets controller
-                                           │
-                                    decrypts → k8s Secrets
-                                           │
-                    ┌──────────────────────┼──────────────────────┐
-                    ▼                      ▼                      ▼
-             robinhood-bot          robinhood-dashboard        postgres
-          (RSI strategy loop)     (Streamlit :30501)        (trades DB)
-          TOKEN_FILE from Secret   DB_URL from Secret        5Gi PVC
-```
+![System Architecture](docs/architecture.png)
 
 **Secrets never touch disk or git.** The flow is always:
 - Locally: macOS Keychain → `vault/keychain.py`

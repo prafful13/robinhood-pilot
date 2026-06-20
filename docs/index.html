@@ -45,9 +45,6 @@
     .feature-card p { color: var(--muted); font-size: 0.88rem; }
 
     /* ARCH DIAGRAM */
-    .arch { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 2rem; font-family: "SF Mono", "Fira Code", monospace; font-size: 0.82rem; line-height: 1.8; color: var(--text); overflow-x: auto; white-space: pre; }
-    .arch .green { color: var(--green); }
-    .arch .muted { color: var(--muted); }
 
     /* SETUP STEPS */
     .steps { counter-reset: step; display: flex; flex-direction: column; gap: 1rem; }
@@ -168,33 +165,9 @@
 <!-- ARCHITECTURE -->
 <section id="architecture">
   <h2>Architecture</h2>
-  <pre class="arch">
-<span class="green">┌─ macOS (your laptop) ──────────────────────────────────────────────────────┐</span>
-│                                                                              │
-│   Keychain ──► kubeseal ──► k8s/sealed/*.yaml (safe to git)                │
-│                                                                              │
-│   <span class="green">┌── Rancher Desktop (k3s) ──────────────────────────────────────────┐</span>    │
-│   │  namespace: robinhood-trader                                       │    │
-│   │                                                                    │    │
-│   │  ┌─────────────────┐    ┌──────────────────┐    ┌─────────────┐  │    │
-│   │  │  robinhood-bot  │    │ robinhood-dash.  │    │  postgres   │  │    │
-│   │  │  (Python async) │    │ (Streamlit)      │    │  (PG 16)    │  │    │
-│   │  │                 │    │                  │    │             │  │    │
-│   │  │ • RSI strategy  │───►│ • Bot status     │◄───│ trades      │  │    │
-│   │  │ • Risk manager  │    │ • Portfolio P&L  │    │ snapshots   │  │    │
-│   │  │ • MCP client    │    │ • Trade history  │    │ bot_status  │  │    │
-│   │  │ • PVC logs (/logs)   │ • Tax calculator │    │             │  │    │
-│   │  └────────┬────────┘    └──────────────────┘    └──────┬──────┘  │    │
-│   │           │                                             │         │    │
-│   │           │ OAuth 2.0 PKCE                              │         │    │
-│   │           ▼                                     pg_dump CronJob   │    │
-│   │  <span class="muted">https://agent.robinhood.com/mcp/trading</span>           ▼              │    │
-│   │                                             backup-pvc (5Gi)      │    │
-│   └───────────────────────────────────────────────────────────────────┘    │
-│                                                                              │
-│   Dashboard:  http://localhost:30501                                         │
-<span class="green">└──────────────────────────────────────────────────────────────────────────────┘</span>
-  </pre>
+  <div style="background:var(--card); border:1px solid var(--border); border-radius:12px; padding:1.5rem; text-align:center;">
+    <img src="architecture.png" alt="Robinhood Pilot System Architecture" style="max-width:100%; height:auto; border-radius:8px;" />
+  </div>
 </section>
 
 <!-- SETUP -->
