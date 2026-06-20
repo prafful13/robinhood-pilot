@@ -1,20 +1,38 @@
 # Prafful's Sick of Trading
 
-An automated equity trading bot for [Robinhood's Agentic MCP API](https://robinhood.com/agentic), deployed on a local k3s cluster. Trades RSI mean-reversion signals on a configurable watchlist with a live Streamlit tax dashboard.
+An automated equity trading bot for [Robinhood's Agentic MCP API](https://robinhood.com/agentic), deployed on a local k3s cluster. Trades RSI mean-reversion signals on a configurable watchlist with a live Streamlit dashboard for monitoring, control, and tax tracking.
 
 ---
 
 ## Strategy
 
-| Parameter | Value |
-|---|---|
-| Indicator | RSI(14) on 15-minute bars |
-| Buy signal | RSI < 30 (oversold) |
-| Sell signal | RSI > 70 (overbought) |
-| Max per trade | $300 |
-| Max open positions | 5 |
-| Daily loss limit | $50 |
-| Default watchlist | GOOGL, AAPL, NVDA, AVGO, CRWV, XLE |
+| Parameter | Default | Configurable from dashboard? |
+|---|---|---|
+| Indicator | RSI(14) on 15-minute bars | Yes |
+| Buy signal | RSI < 30 (oversold) | Yes |
+| Sell signal | RSI > 70 (overbought) | Yes |
+| Max per trade | $300 | Yes |
+| Max open positions | 5 | Yes |
+| Daily loss limit | $50 | Yes |
+| Bar interval | 15 minutes | No (fixed) |
+| Market hours | Mon–Fri 9:30–16:00 ET | No (fixed) |
+| Default watchlist | GOOGL, AAPL, NVDA, AVGO, CRWV, XLE | Edit `config.yaml` |
+
+Strategy and risk parameters are editable live from the dashboard sidebar — the bot picks up changes on the next 15-minute cycle without a restart.
+
+---
+
+## Dashboard Features
+
+- **Portfolio P&L chart** with 1D / 1W / 1M / 6M / 1Y / Max period selector
+- **⏹ Pause / ▶ Resume** button — stops order placement without stopping the bot process
+- **⟳ Refresh** button — requests an immediate portfolio snapshot (serviced within ~60s)
+- **Token validity** display — shows days remaining on the OAuth token with expiry warnings
+- **Live strategy & risk controls** in the sidebar — apply changes without redeployment
+- **Tax obligation** — FIFO cost basis, short-term (< 365 days) and long-term (≥ 365 days) rates, adjustable sliders
+- **Trade history** table + cumulative P&L chart + per-symbol P&L bar chart
+- Dashboard timezone follows `display_timezone` in `config.yaml` (default: `America/Los_Angeles`)
+- Auto-refreshes every 60 seconds; accessible at **http://localhost:30501**
 
 ---
 
@@ -69,10 +87,11 @@ uv sync --all-groups        # creates .venv, installs all deps
 
 ### 2. Configure
 
-Edit `config.yaml` and set your account number and watchlist:
+Edit `config.yaml` and set your account number, watchlist, and display timezone:
 
 ```yaml
 account_number: "YOUR_ACCOUNT_NUMBER"   # Robinhood → Account → Account number
+display_timezone: "America/Los_Angeles" # IANA timezone for dashboard display
 watchlist:
   - GOOGL
   - AAPL
@@ -85,16 +104,24 @@ watchlist:
 kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.27.0/controller.yaml
 ```
 
-### 4. Generate secrets
+### 4. Store the client ID
+
+The Robinhood MCP client ID is stored in Keychain (never in files or git):
+
+```bash
+uv run inv keychain-set client_id <your-client-id>
+```
+
+### 5. Generate secrets and authenticate
 
 ```bash
 uv run inv secrets-init     # generates postgres password → macOS Keychain
 uv run inv auth             # OAuth browser flow → token → macOS Keychain
 ```
 
-`inv auth` will open a browser tab. Log in to Robinhood and grant access. The token is saved to your macOS Keychain (never written to disk).
+`inv auth` opens a browser tab. Log in to Robinhood and grant access. The token is saved to your macOS Keychain (never written to disk). Tokens last ~30 days — see [Re-authenticate](#re-authenticate-token-expires-30-days) below.
 
-### 5. Seal secrets for k8s
+### 6. Seal secrets for k8s
 
 ```bash
 kubectl apply -f k8s/namespace.yaml
@@ -103,7 +130,7 @@ uv run inv k8s-seal                    # Keychain → encrypted YAMLs in k8s/sea
 kubectl apply -f k8s/sealed/           # controller decrypts → k8s Secrets
 ```
 
-### 6. Build and deploy
+### 7. Build and deploy
 
 ```bash
 uv run inv docker-build     # builds robinhood-bot:latest and robinhood-dashboard:latest
@@ -144,6 +171,10 @@ kubectl apply -f k8s/sealed/
 uv run inv k8s-restart
 ```
 
+### Change strategy or risk parameters
+
+Use the dashboard sidebar — no restart needed. Changes apply on the next 15-minute bot cycle. To change the watchlist or bar interval, edit `config.yaml` and restart (`inv docker-build && inv k8s-restart`).
+
 ### Add/change dependencies
 
 ```bash
@@ -169,7 +200,9 @@ uv run inv --list
 | `k8s-seal` | Keychain → `k8s/sealed/` SealedSecret YAMLs |
 | `k8s-apply` | Apply all k8s manifests |
 | `k8s-status` | Show pods, services, PVCs |
-| `k8s-logs` | Stream bot logs |
+| `k8s-logs` | Stream bot logs (stdout) |
+| `k8s-logs-file` | Read rotated PVC log files |
+| `k8s-logs-pull` | Copy all PVC logs to local disk |
 | `k8s-restart` | Rolling restart |
 | `k8s-postgres` | Deploy/redeploy postgres |
 | `k8s-psql` | Open psql shell (port-forwards automatically) |
@@ -194,7 +227,7 @@ robinhood-pilot/
 ├── risk/
 │   └── manager.py    Position limits, daily loss cap
 ├── db/
-│   ├── models.py     SQLAlchemy Trade model
+│   ├── models.py     Trade, PortfolioSnapshot, BotStatus, BotControl, RuntimeConfig
 │   └── database.py   PostgreSQL (DB_URL env) or Keychain+port-forward (local)
 ├── tax/
 │   └── calculator.py FIFO cost basis, ST/LT gain split
@@ -208,7 +241,7 @@ robinhood-pilot/
 │   ├── dashboard-deployment.yaml
 │   └── dashboard-service.yaml
 ├── main.py           Bot main loop (market hours check, 15-min polling)
-├── dashboard.py      Streamlit tax + trade history dashboard
+├── dashboard.py      Streamlit monitoring + control + tax dashboard
 ├── tasks.py          invoke task runner (replaces Makefile)
 ├── config.yaml       Runtime config — edit this, never hardcode values
 ├── pyproject.toml    Python deps (psycopg2, sqlalchemy, streamlit, plotly…)
@@ -224,6 +257,7 @@ robinhood-pilot/
 | What | Where | Notes |
 |---|---|---|
 | OAuth token | macOS Keychain | Key: `oauth_tokens`, service: `robinhood-trader` |
+| Client ID | macOS Keychain | Key: `client_id` — never in code or config files |
 | Postgres password | macOS Keychain | Key: `postgres_password` |
 | k8s Secrets | Sealed Secrets controller | Decrypted in-cluster only |
 | Pods | Receive secrets as env vars | Never touch Keychain directly |

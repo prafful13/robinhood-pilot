@@ -19,8 +19,8 @@ import pytz
 import yaml
 
 from broker.robinhood import RobinhoodClient
-from db.database import SessionLocal, init_db
-from db.models import BotControl, BotStatus, PortfolioSnapshot, Trade
+from db.database import SessionLocal, init_db, init_runtime_config
+from db.models import BotControl, BotStatus, PortfolioSnapshot, RuntimeConfig, Trade
 from risk.manager import RiskManager
 from strategy.rsi import RSIMeanReversion
 
@@ -180,6 +180,32 @@ async def run_cycle(broker: RobinhoodClient, strategy: RSIMeanReversion, risk: R
             log.info(f"  ✓ SELL order placed: {sig.symbol}  qty={qty_str}  PnL=${pnl:.2f}  order={order_id}")
 
 
+def _apply_runtime_config(cfg: dict) -> dict:
+    """Overlay live RuntimeConfig DB values onto config.yaml base config."""
+    try:
+        with SessionLocal() as db:
+            rc = db.get(RuntimeConfig, 1)
+        if rc is None:
+            return cfg
+        return {
+            **cfg,
+            "strategy": {
+                **cfg["strategy"],
+                "rsi_period": rc.rsi_period,
+                "oversold": rc.oversold,
+                "overbought": rc.overbought,
+            },
+            "risk": {
+                **cfg["risk"],
+                "max_trade_usd": rc.max_trade_usd,
+                "max_positions": rc.max_positions,
+                "daily_loss_limit_usd": rc.daily_loss_limit_usd,
+            },
+        }
+    except Exception:
+        return cfg
+
+
 _HEARTBEAT = Path("/tmp/heartbeat")
 
 
@@ -254,10 +280,9 @@ def _record_bot_status(token_data: dict | None, now: datetime, error: str | None
 async def main():
     cfg = load_config()
     init_db()
+    init_runtime_config(cfg)
 
     account = cfg["account_number"]
-    strategy = RSIMeanReversion(cfg)
-    risk = RiskManager(cfg)
 
     shutdown = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -282,6 +307,11 @@ async def main():
             _touch_heartbeat()
             now = datetime.now(ET).replace(tzinfo=None)
             token_data = broker.get_token_data()
+
+            # Rebuild strategy and risk each cycle so dashboard config changes take effect immediately
+            effective_cfg = _apply_runtime_config(cfg)
+            strategy = RSIMeanReversion(effective_cfg)
+            risk = RiskManager(effective_cfg)
 
             if is_market_open():
                 if _is_paused():

@@ -51,6 +51,21 @@ class BotStatus(Base):
     last_error: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
 
 
+class RuntimeConfig(Base):
+    """Live strategy + risk parameters, editable from the dashboard (upsert on id=1)."""
+    __tablename__ = "runtime_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    strategy: Mapped[str] = mapped_column(String(64), nullable=False, default="rsi_mean_reversion")
+    rsi_period: Mapped[int] = mapped_column(Integer, nullable=False, default=14)
+    oversold: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    overbought: Mapped[int] = mapped_column(Integer, nullable=False, default=70)
+    max_trade_usd: Mapped[float] = mapped_column(Float, nullable=False, default=300.0)
+    max_positions: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    daily_loss_limit_usd: Mapped[float] = mapped_column(Float, nullable=False, default=50.0)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
 class BotControl(Base):
     """Single-row control record written by the dashboard, read by the bot (id=1)."""
     __tablename__ = "bot_control"

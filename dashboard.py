@@ -21,8 +21,8 @@ import plotly.graph_objects as go
 import streamlit as st
 import yaml
 
-from db.database import SessionLocal, init_db
-from db.models import BotControl, BotStatus, PortfolioSnapshot, Trade
+from db.database import SessionLocal, init_db, init_runtime_config
+from db.models import BotControl, BotStatus, PortfolioSnapshot, RuntimeConfig, Trade
 from tax.calculator import compute as compute_tax
 
 init_db()  # ensure all tables exist (including BotStatus, PortfolioSnapshot)
@@ -142,20 +142,131 @@ def load_tax_summary(short_rate: float, long_rate: float):
     return compute_tax(short_rate, long_rate)
 
 
+def load_runtime_config() -> SimpleNamespace | None:
+    """Not cached — reads live DB values so form shows current config."""
+    with SessionLocal() as db:
+        rc = db.get(RuntimeConfig, 1)
+    if rc is None:
+        return None
+    return SimpleNamespace(
+        strategy=rc.strategy, rsi_period=rc.rsi_period,
+        oversold=rc.oversold, overbought=rc.overbought,
+        max_trade_usd=rc.max_trade_usd, max_positions=rc.max_positions,
+        daily_loss_limit_usd=rc.daily_loss_limit_usd, updated_at=rc.updated_at,
+    )
+
+
+def _save_runtime_config(
+    strategy: str, rsi_period: int, oversold: int, overbought: int,
+    max_trade_usd: float, max_positions: int, daily_loss_limit_usd: float,
+) -> None:
+    now_et = datetime.now(ET).replace(tzinfo=None)
+    with SessionLocal() as db:
+        rc = db.get(RuntimeConfig, 1)
+        if rc:
+            rc.strategy = strategy
+            rc.rsi_period = rsi_period
+            rc.oversold = oversold
+            rc.overbought = overbought
+            rc.max_trade_usd = max_trade_usd
+            rc.max_positions = max_positions
+            rc.daily_loss_limit_usd = daily_loss_limit_usd
+            rc.updated_at = now_et
+        else:
+            db.add(RuntimeConfig(
+                id=1, strategy=strategy, rsi_period=rsi_period,
+                oversold=oversold, overbought=overbought,
+                max_trade_usd=max_trade_usd, max_positions=max_positions,
+                daily_loss_limit_usd=daily_loss_limit_usd, updated_at=now_et,
+            ))
+        db.commit()
+
+
 # ── Sidebar ────────────────────────────────────────────────────────────────
 
 cfg = load_config()
+init_runtime_config(cfg)  # seed DB defaults from config.yaml on first run
 tax_cfg = cfg["tax"]
 _LOCAL_TZ = pytz.timezone(cfg.get("display_timezone", "America/New_York"))
-_TZ_ABBR = datetime.now(_LOCAL_TZ).strftime("%Z")  # e.g. "PDT", "PST", "ET"
+_TZ_ABBR = datetime.now(_LOCAL_TZ).strftime("%Z")
 
-st.sidebar.title("Settings")
+st.sidebar.title("⚙ Settings")
 st.sidebar.markdown(f"**Account:** ••••{cfg['account_number'][-4:]}")
 st.sidebar.markdown(f"**Watchlist:** {', '.join(cfg['watchlist'])}")
-short_pct = st.sidebar.slider("Short-term tax rate", 10, 50, int(tax_cfg["short_term_rate"] * 100), 1, format="%d%%")
-long_pct  = st.sidebar.slider("Long-term tax rate",   0, 25, int(tax_cfg["long_term_rate"]  * 100), 1, format="%d%%")
+
+st.sidebar.divider()
+st.sidebar.markdown("##### Strategy & Risk")
+
+rc = load_runtime_config()
+s_def, r_def = cfg["strategy"], cfg["risk"]
+
+with st.sidebar:
+    with st.form("runtime_config_form"):
+        st.selectbox("Strategy", ["RSI Mean-Reversion"], index=0)
+
+        st.markdown("**RSI Parameters**")
+        rsi_period = st.number_input(
+            "Period", min_value=2, max_value=50, step=1,
+            value=rc.rsi_period if rc else s_def["rsi_period"],
+        )
+        ov_col, ob_col = st.columns(2)
+        oversold   = ov_col.number_input(
+            "Buy below", min_value=1, max_value=49, step=1,
+            value=rc.oversold if rc else s_def["oversold"],
+        )
+        overbought = ob_col.number_input(
+            "Sell above", min_value=51, max_value=99, step=1,
+            value=rc.overbought if rc else s_def["overbought"],
+        )
+
+        st.markdown("**Risk Limits**")
+        max_trade = st.number_input(
+            "Max trade ($)", min_value=1.0, step=10.0, format="%.0f",
+            value=float(rc.max_trade_usd if rc else r_def["max_trade_usd"]),
+        )
+        mp_col, dl_col = st.columns(2)
+        max_pos = mp_col.number_input(
+            "Max pos", min_value=1, max_value=20, step=1,
+            value=rc.max_positions if rc else r_def["max_positions"],
+        )
+        daily_loss = dl_col.number_input(
+            "Daily loss ($)", min_value=0.0, step=5.0, format="%.0f",
+            value=float(rc.daily_loss_limit_usd if rc else r_def["daily_loss_limit_usd"]),
+        )
+
+        submitted = st.form_submit_button("Apply Config", type="primary", use_container_width=True)
+
+if submitted:
+    _save_runtime_config(
+        strategy="rsi_mean_reversion",
+        rsi_period=int(rsi_period), oversold=int(oversold), overbought=int(overbought),
+        max_trade_usd=float(max_trade), max_positions=int(max_pos),
+        daily_loss_limit_usd=float(daily_loss),
+    )
+    st.cache_data.clear()
+    st.rerun()
+
+if rc and rc.updated_at:
+    st.sidebar.caption(f"Config saved: {_to_local(rc.updated_at).strftime(f'%b %d %H:%M {_TZ_ABBR}')}")
+
+st.sidebar.divider()
+st.sidebar.markdown("##### Tax Rates")
+short_pct = st.sidebar.slider("Short-term", 10, 50, int(tax_cfg["short_term_rate"] * 100), 1, format="%d%%")
+long_pct  = st.sidebar.slider("Long-term",   0, 25, int(tax_cfg["long_term_rate"]  * 100), 1, format="%d%%")
 short_rate = short_pct / 100
 long_rate  = long_pct  / 100
+
+st.sidebar.divider()
+with st.sidebar.expander("Strategy Reference"):
+    st.markdown("""
+**RSI Mean-Reversion** · 15-min bars · 7-day lookback · Wilder's EWM
+
+- **Buy:** RSI drops below the "Buy below" threshold (oversold)
+- **Sell:** RSI rises above the "Sell above" threshold (overbought)
+- Market hours: Mon–Fri 9:30–16:00 ET, polls every 15 minutes
+- All parameters above are live — bot picks them up on the next cycle
+""")
+
 st.sidebar.caption(f"Auto-refreshes every {REFRESH_SECS}s")
 
 # ── Header ─────────────────────────────────────────────────────────────────
@@ -391,22 +502,6 @@ else:
         }),
         use_container_width=True, hide_index=True,
     )
-
-# ── Strategy Reference ─────────────────────────────────────────────────────
-
-with st.expander("Strategy Reference"):
-    s = cfg["strategy"]
-    r = cfg["risk"]
-    st.markdown(f"""
-| Parameter | Value |
-|---|---|
-| Indicator | RSI({s['rsi_period']}) on {s['bar_interval']} bars |
-| Buy signal | RSI < {s['oversold']} |
-| Sell signal | RSI > {s['overbought']} |
-| Max trade | ${r['max_trade_usd']} |
-| Max positions | {r['max_positions']} |
-| Daily loss limit | ${r['daily_loss_limit_usd']} |
-""")
 
 # ── Auto-refresh ───────────────────────────────────────────────────────────
 

@@ -87,8 +87,8 @@
 </nav>
 
 <div class="hero">
-  <h1>Robinhood <span>RSI</span> Trader</h1>
-  <p>An automated mean-reversion trading bot for Robinhood, using RSI(14) signals, deployed on a local k3s cluster with a real-time Streamlit dashboard.</p>
+  <h1>Prafful's <span>Sick of Trading</span></h1>
+  <p>An automated mean-reversion trading bot for Robinhood, using RSI(14) signals, deployed on a local k3s cluster with a real-time Streamlit dashboard for control, monitoring, and tax tracking.</p>
   <div class="badge-row">
     <span class="badge green">RSI(14) Mean-Reversion</span>
     <span class="badge">Python 3.13</span>
@@ -103,13 +103,13 @@
 <section id="screenshots">
   <h2>Dashboard</h2>
   <p style="color:var(--muted); margin-bottom:1.5rem; font-size:0.9rem;">
-    The local Streamlit dashboard shows bot health, token expiry, portfolio equity over selectable periods (1D → Max), cumulative P&amp;L, tax obligations, and full trade history — auto-refreshing every 60 seconds.
+    The local Streamlit dashboard shows bot health, token expiry, portfolio equity over selectable periods (1D → Max), cumulative P&amp;L, tax obligations, and full trade history — auto-refreshing every 60 seconds. Strategy and risk parameters are editable from the sidebar without a bot restart.
   </p>
   <div class="screenshots">
-    <div class="screenshot-placeholder">📊 Portfolio Value &amp; P&amp;L</div>
-    <div class="screenshot-placeholder">🤖 Bot Status &amp; Token Validity</div>
+    <div class="screenshot-placeholder">📊 Portfolio Value &amp; P&amp;L Chart</div>
+    <div class="screenshot-placeholder">🤖 Bot Status &amp; Pause/Resume</div>
     <div class="screenshot-placeholder">💰 Tax Obligation Summary</div>
-    <div class="screenshot-placeholder">📋 Trade History</div>
+    <div class="screenshot-placeholder">⚙ Live Strategy &amp; Risk Controls</div>
   </div>
 </section>
 
@@ -129,8 +129,8 @@
     </div>
     <div class="feature-card">
       <div class="icon">🛡️</div>
-      <h3>Risk Management</h3>
-      <p>Per-trade USD cap, maximum open positions, and a daily loss limit — all configurable in <code>config.yaml</code>.</p>
+      <h3>Live Risk Controls</h3>
+      <p>Per-trade USD cap, max open positions, daily loss limit — editable from the dashboard sidebar. Bot picks them up on the next cycle.</p>
     </div>
     <div class="feature-card">
       <div class="icon">🔐</div>
@@ -150,7 +150,12 @@
     <div class="feature-card">
       <div class="icon">📊</div>
       <h3>Streamlit Dashboard</h3>
-      <p>Real-time portfolio equity chart with 1D/1W/1M/6M/1Y/5Y/Max period selector, P&amp;L, trade history, and tax calculator.</p>
+      <p>Portfolio equity chart (1D–Max), Pause/Resume bot, manual refresh, trade history, tax calculator, and live strategy/risk controls.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">⏸️</div>
+      <h3>Pause / Resume</h3>
+      <p>Pause order placement without stopping the bot process. Useful during volatile periods — bot keeps updating status and taking portfolio snapshots.</p>
     </div>
     <div class="feature-card">
       <div class="icon">📝</div>
@@ -222,9 +227,11 @@ uv sync --all-groups</code></pre>
     <div class="step">
       <div class="step-num">3</div>
       <div>
-        <h3>Generate secrets &amp; authenticate</h3>
-        <pre><code>uv run inv secrets-init    # generates postgres password → Keychain
+        <h3>Store the client ID &amp; generate secrets</h3>
+        <pre><code>uv run inv keychain-set client_id &lt;your-client-id&gt;
+uv run inv secrets-init    # generates postgres password → Keychain
 uv run inv auth            # OAuth browser flow → token → Keychain</code></pre>
+        <p style="margin-top:0.4rem;">The client ID is stored in your macOS Keychain — never in files or git.</p>
       </div>
     </div>
     <div class="step">
@@ -271,7 +278,7 @@ inv k8s-status             # check pods are Running</code></pre>
       <tr><th>Layer</th><th>Where</th><th>What</th></tr>
     </thead>
     <tbody>
-      <tr><td>Keychain</td><td>macOS Keychain</td><td>Source of truth: postgres password, OAuth tokens</td></tr>
+      <tr><td>Keychain</td><td>macOS Keychain</td><td>Source of truth: OAuth tokens, client ID, postgres password</td></tr>
       <tr><td>Sealed Secrets</td><td><code>k8s/sealed/*.yaml</code></td><td>Encrypted with cluster public key — safe to commit</td></tr>
       <tr><td>k8s Secrets</td><td>In-cluster only</td><td>Decrypted by Bitnami controller; injected as env vars / file mounts</td></tr>
     </tbody>

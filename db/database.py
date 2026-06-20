@@ -5,7 +5,7 @@ import os
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-from db.models import Base
+from db.models import Base, RuntimeConfig
 
 
 def _get_db_url() -> str:
@@ -30,6 +30,28 @@ SessionLocal = sessionmaker(bind=ENGINE, expire_on_commit=False)
 def init_db() -> None:
     Base.metadata.create_all(ENGINE)
     _migrate()
+
+
+def init_runtime_config(cfg: dict) -> None:
+    """Seed RuntimeConfig row from config.yaml defaults if it doesn't exist yet."""
+    with SessionLocal() as db:
+        if db.get(RuntimeConfig, 1) is not None:
+            return
+        s, r = cfg["strategy"], cfg["risk"]
+        try:
+            db.add(RuntimeConfig(
+                id=1,
+                strategy="rsi_mean_reversion",
+                rsi_period=s["rsi_period"],
+                oversold=s["oversold"],
+                overbought=s["overbought"],
+                max_trade_usd=r["max_trade_usd"],
+                max_positions=r["max_positions"],
+                daily_loss_limit_usd=r["daily_loss_limit_usd"],
+            ))
+            db.commit()
+        except Exception:
+            db.rollback()  # another process beat us to it; ignore
 
 
 def _migrate() -> None:
