@@ -19,9 +19,6 @@ build/
 bazel-*
 .bazel/
 
-# Logs
-logs/
-
 # uv
 .python-version
 
