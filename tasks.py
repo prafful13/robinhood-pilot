@@ -314,6 +314,28 @@ def k8s_logs_ls(c):
     c.run(f"kubectl exec {pod} -n {NS} -- ls -lh /logs/", pty=True)
 
 
+@task(name="k8s-logs-pull")
+def k8s_logs_pull(c, dest="./bot-logs"):
+    """Copy all PVC log files to local disk.
+    Usage:
+      inv k8s-logs-pull                 # copies to ./bot-logs/
+      inv k8s-logs-pull --dest ~/logs   # custom destination
+    """
+    result = c.run(
+        f"kubectl get pod -n {NS} -l app=robinhood-bot -o jsonpath='{{.items[0].metadata.name}}'",
+        hide=True, warn=True,
+    )
+    pod = result.stdout.strip()
+    if not pod:
+        print("Bot pod not found.")
+        return
+    Path(dest).mkdir(parents=True, exist_ok=True)
+    c.run(f"kubectl cp {NS}/{pod}:/logs {dest}", warn=True)
+    print(f"✓ Logs copied to {dest}/")
+    import subprocess
+    subprocess.run(["ls", "-lh", dest])
+
+
 @task(name="k8s-restart")
 def k8s_restart(c):
     """Rolling restart of both application deployments."""
