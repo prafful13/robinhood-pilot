@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from db.models import Base
@@ -29,3 +29,15 @@ SessionLocal = sessionmaker(bind=ENGINE, expire_on_commit=False)
 
 def init_db() -> None:
     Base.metadata.create_all(ENGINE)
+    _migrate()
+
+
+def _migrate() -> None:
+    """Forward-only column additions for tables that already exist in prod."""
+    with ENGINE.connect() as conn:
+        # bot_control.portfolio_refresh_requested added after initial deploy
+        conn.execute(text(
+            "ALTER TABLE bot_control "
+            "ADD COLUMN IF NOT EXISTS portfolio_refresh_requested BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
+        conn.commit()

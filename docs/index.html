@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Prafful's Sick of Trading</title>
+  <style>
+    :root {
+      --green: #00C805;
+      --dark: #0f1011;
+      --card: #1a1c1e;
+      --border: #2a2d30;
+      --text: #e8eaed;
+      --muted: #9aa0a6;
+      --accent: #00C805;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--dark); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; }
+
+    /* NAV */
+    nav { background: var(--card); border-bottom: 1px solid var(--border); padding: 0 2rem; display: flex; align-items: center; gap: 2rem; height: 56px; position: sticky; top: 0; z-index: 100; }
+    nav .logo { color: var(--green); font-weight: 700; font-size: 1.1rem; text-decoration: none; }
+    nav a { color: var(--muted); text-decoration: none; font-size: 0.9rem; transition: color 0.2s; }
+    nav a:hover { color: var(--text); }
+
+    /* HERO */
+    .hero { text-align: center; padding: 6rem 2rem 4rem; background: radial-gradient(ellipse at 50% 0%, rgba(0,200,5,0.07) 0%, transparent 60%); }
+    .hero h1 { font-size: clamp(2rem, 5vw, 3.5rem); font-weight: 700; letter-spacing: -0.03em; }
+    .hero h1 span { color: var(--green); }
+    .hero p { color: var(--muted); font-size: 1.15rem; max-width: 600px; margin: 1rem auto 2rem; }
+    .badge-row { display: flex; gap: 0.5rem; justify-content: center; flex-wrap: wrap; }
+    .badge { background: var(--card); border: 1px solid var(--border); border-radius: 999px; padding: 0.25rem 0.9rem; font-size: 0.8rem; color: var(--muted); }
+    .badge.green { border-color: var(--green); color: var(--green); }
+
+    /* SECTION */
+    section { max-width: 900px; margin: 0 auto; padding: 4rem 2rem; }
+    section h2 { font-size: 1.6rem; font-weight: 600; margin-bottom: 1.5rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); }
+
+    /* FEATURE GRID */
+    .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; }
+    .feature-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; transition: border-color 0.2s; }
+    .feature-card:hover { border-color: var(--green); }
+    .feature-card .icon { font-size: 1.6rem; margin-bottom: 0.75rem; }
+    .feature-card h3 { font-size: 1rem; font-weight: 600; margin-bottom: 0.4rem; }
+    .feature-card p { color: var(--muted); font-size: 0.88rem; }
+
+    /* ARCH DIAGRAM */
+    .arch { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 2rem; font-family: "SF Mono", "Fira Code", monospace; font-size: 0.82rem; line-height: 1.8; color: var(--text); overflow-x: auto; white-space: pre; }
+    .arch .green { color: var(--green); }
+    .arch .muted { color: var(--muted); }
+
+    /* SETUP STEPS */
+    .steps { counter-reset: step; display: flex; flex-direction: column; gap: 1rem; }
+    .step { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem 1.5rem; display: flex; gap: 1.25rem; align-items: flex-start; }
+    .step-num { background: var(--green); color: #000; font-weight: 700; font-size: 0.85rem; border-radius: 50%; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 0.1rem; }
+    .step h3 { font-size: 0.95rem; font-weight: 600; margin-bottom: 0.3rem; }
+    .step p, .step code { color: var(--muted); font-size: 0.85rem; }
+    .step code { font-family: "SF Mono", "Fira Code", monospace; background: rgba(255,255,255,0.05); padding: 0.15rem 0.4rem; border-radius: 4px; color: var(--text); }
+    .step pre { background: rgba(0,0,0,0.4); border-radius: 6px; padding: 0.75rem 1rem; margin-top: 0.5rem; overflow-x: auto; }
+    .step pre code { background: none; padding: 0; font-size: 0.82rem; }
+
+    /* SECRETS TABLE */
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th { text-align: left; color: var(--muted); font-weight: 500; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); }
+    td { padding: 0.6rem 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.04); }
+    td:first-child { font-family: monospace; color: var(--green); }
+
+    /* FOOTER */
+    footer { text-align: center; color: var(--muted); font-size: 0.82rem; padding: 3rem 2rem; border-top: 1px solid var(--border); }
+    footer a { color: var(--muted); text-decoration: underline; }
+
+    /* SCREENSHOTS */
+    .screenshot-placeholder { background: var(--card); border: 1px solid var(--border); border-radius: 12px; height: 320px; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 0.9rem; }
+    .screenshots { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media (max-width: 640px) { .screenshots { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="logo" href="#">📈 Sick of Trading</a>
+  <a href="#features">Features</a>
+  <a href="#architecture">Architecture</a>
+  <a href="#setup">Setup</a>
+  <a href="#security">Security</a>
+  <a href="https://github.com/prafful13/robinhood-pilot" target="_blank">GitHub ↗</a>
+</nav>
+
+<div class="hero">
+  <h1>Robinhood <span>RSI</span> Trader</h1>
+  <p>An automated mean-reversion trading bot for Robinhood, using RSI(14) signals, deployed on a local k3s cluster with a real-time Streamlit dashboard.</p>
+  <div class="badge-row">
+    <span class="badge green">RSI(14) Mean-Reversion</span>
+    <span class="badge">Python 3.13</span>
+    <span class="badge">k3s / Kubernetes</span>
+    <span class="badge">PostgreSQL</span>
+    <span class="badge">Robinhood MCP API</span>
+    <span class="badge">Streamlit</span>
+  </div>
+</div>
+
+<!-- SCREENSHOTS -->
+<section id="screenshots">
+  <h2>Dashboard</h2>
+  <p style="color:var(--muted); margin-bottom:1.5rem; font-size:0.9rem;">
+    The local Streamlit dashboard shows bot health, token expiry, portfolio equity over selectable periods (1D → Max), cumulative P&amp;L, tax obligations, and full trade history — auto-refreshing every 60 seconds.
+  </p>
+  <div class="screenshots">
+    <div class="screenshot-placeholder">📊 Portfolio Value &amp; P&amp;L</div>
+    <div class="screenshot-placeholder">🤖 Bot Status &amp; Token Validity</div>
+    <div class="screenshot-placeholder">💰 Tax Obligation Summary</div>
+    <div class="screenshot-placeholder">📋 Trade History</div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section id="features">
+  <h2>Features</h2>
+  <div class="features">
+    <div class="feature-card">
+      <div class="icon">📡</div>
+      <h3>Robinhood MCP API</h3>
+      <p>Uses Robinhood's official Agentic MCP API (JSON-RPC over HTTPS) — no screen-scraping or unofficial endpoints.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">📈</div>
+      <h3>RSI(14) Signals</h3>
+      <p>Wilder's EWM RSI on 15-minute bars. Buy when RSI &lt; 30 (oversold), sell when RSI &gt; 70 (overbought).</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🛡️</div>
+      <h3>Risk Management</h3>
+      <p>Per-trade USD cap, maximum open positions, and a daily loss limit — all configurable in <code>config.yaml</code>.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🔐</div>
+      <h3>3-Layer Secrets</h3>
+      <p>macOS Keychain → Bitnami Sealed Secrets → k8s Secrets. No credentials ever touch disk or git.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🗄️</div>
+      <h3>PostgreSQL on k3s</h3>
+      <p>Every trade, portfolio snapshot, and bot heartbeat stored in Postgres with daily pg_dump backups (7 retained).</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">♻️</div>
+      <h3>Resilient to Sleep</h3>
+      <p>Detects stale TCP connections after laptop sleep, reconnects transparently. SIGTERM-safe graceful shutdown.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">📊</div>
+      <h3>Streamlit Dashboard</h3>
+      <p>Real-time portfolio equity chart with 1D/1W/1M/6M/1Y/5Y/Max period selector, P&amp;L, trade history, and tax calculator.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">📝</div>
+      <h3>Persistent Logs</h3>
+      <p>Daily-rotating log files on a 10Gi PVC. <code>inv k8s-logs-pull</code> copies the full history to your Mac.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ARCHITECTURE -->
+<section id="architecture">
+  <h2>Architecture</h2>
+  <pre class="arch">
+<span class="green">┌─ macOS (your laptop) ──────────────────────────────────────────────────────┐</span>
+│                                                                              │
+│   Keychain ──► kubeseal ──► k8s/sealed/*.yaml (safe to git)                │
+│                                                                              │
+│   <span class="green">┌── Rancher Desktop (k3s) ──────────────────────────────────────────┐</span>    │
+│   │  namespace: robinhood-trader                                       │    │
+│   │                                                                    │    │
+│   │  ┌─────────────────┐    ┌──────────────────┐    ┌─────────────┐  │    │
+│   │  │  robinhood-bot  │    │ robinhood-dash.  │    │  postgres   │  │    │
+│   │  │  (Python async) │    │ (Streamlit)      │    │  (PG 16)    │  │    │
+│   │  │                 │    │                  │    │             │  │    │
+│   │  │ • RSI strategy  │───►│ • Bot status     │◄───│ trades      │  │    │
+│   │  │ • Risk manager  │    │ • Portfolio P&L  │    │ snapshots   │  │    │
+│   │  │ • MCP client    │    │ • Trade history  │    │ bot_status  │  │    │
+│   │  │ • PVC logs (/logs)   │ • Tax calculator │    │             │  │    │
+│   │  └────────┬────────┘    └──────────────────┘    └──────┬──────┘  │    │
+│   │           │                                             │         │    │
+│   │           │ OAuth 2.0 PKCE                              │         │    │
+│   │           ▼                                     pg_dump CronJob   │    │
+│   │  <span class="muted">https://agent.robinhood.com/mcp/trading</span>           ▼              │    │
+│   │                                             backup-pvc (5Gi)      │    │
+│   └───────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+│   Dashboard:  http://localhost:30501                                         │
+<span class="green">└──────────────────────────────────────────────────────────────────────────────┘</span>
+  </pre>
+</section>
+
+<!-- SETUP -->
+<section id="setup">
+  <h2>Setup</h2>
+
+  <h3 style="color:var(--muted); font-size:0.85rem; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:1rem;">Prerequisites</h3>
+  <div style="background:var(--card); border:1px solid var(--border); border-radius:8px; padding:1rem 1.25rem; font-size:0.88rem; color:var(--muted); margin-bottom:2rem;">
+    <strong style="color:var(--text);">Required:</strong> macOS, <a href="https://rancherdesktop.io" style="color:var(--green);">Rancher Desktop</a> (k3s + Docker), <a href="https://github.com/astral-sh/uv" style="color:var(--green);">uv</a>, a Robinhood account with API access.
+  </div>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div>
+        <h3>Clone &amp; install dependencies</h3>
+        <pre><code>git clone https://github.com/prafful13/robinhood-pilot
+cd robinhood-pilot
+uv venv --python 3.13
+uv sync --all-groups</code></pre>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div>
+        <h3>Edit <code>config.yaml</code></h3>
+        <p>Set your <code>account_number</code> (found in Robinhood → Account → Account number) and adjust the watchlist, RSI thresholds, and risk limits to your preference.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div>
+        <h3>Generate secrets &amp; authenticate</h3>
+        <pre><code>uv run inv secrets-init    # generates postgres password → Keychain
+uv run inv auth            # OAuth browser flow → token → Keychain</code></pre>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div>
+        <h3>Install Bitnami Sealed Secrets controller</h3>
+        <pre><code>kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.27.1/controller.yaml</code></pre>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <div>
+        <h3>Seal &amp; apply secrets</h3>
+        <pre><code>kubectl apply -f k8s/namespace.yaml
+uv run inv k8s-seal              # Keychain → k8s/sealed/*.yaml
+kubectl apply -f k8s/sealed/     # SealedSecrets → real k8s Secrets</code></pre>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">6</div>
+      <div>
+        <h3>Build &amp; deploy</h3>
+        <pre><code>uv run inv docker-build    # build bot + dashboard images
+uv run inv k8s-apply       # deploy postgres, bot, dashboard
+inv k8s-status             # check pods are Running</code></pre>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">7</div>
+      <div>
+        <h3>Open the dashboard</h3>
+        <p>Navigate to <code>http://localhost:30501</code> — the dashboard auto-refreshes every 60 seconds.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SECURITY -->
+<section id="security">
+  <h2>Security Model</h2>
+  <p style="color:var(--muted); margin-bottom:1.5rem; font-size:0.9rem;">Secrets flow from your Mac's Keychain into k8s pods without ever touching disk, environment variable literals, or git.</p>
+  <table>
+    <thead>
+      <tr><th>Layer</th><th>Where</th><th>What</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Keychain</td><td>macOS Keychain</td><td>Source of truth: postgres password, OAuth tokens</td></tr>
+      <tr><td>Sealed Secrets</td><td><code>k8s/sealed/*.yaml</code></td><td>Encrypted with cluster public key — safe to commit</td></tr>
+      <tr><td>k8s Secrets</td><td>In-cluster only</td><td>Decrypted by Bitnami controller; injected as env vars / file mounts</td></tr>
+    </tbody>
+  </table>
+
+  <h3 style="margin-top:2rem; margin-bottom:0.75rem; font-size:1rem;">Token Renewal</h3>
+  <p style="color:var(--muted); font-size:0.88rem;">OAuth tokens expire periodically. The dashboard shows a warning when expiry is within 3 days. Renew with:</p>
+  <pre style="background:var(--card); border:1px solid var(--border); border-radius:8px; padding:1rem; margin-top:0.75rem; font-size:0.82rem; overflow-x:auto;"><code>uv run inv auth
+uv run inv k8s-seal
+kubectl apply -f k8s/sealed/
+uv run inv k8s-restart</code></pre>
+</section>
+
+<footer>
+  Built with Python 3.13 · k3s · Streamlit · PostgreSQL<br>
+  <a href="https://github.com/prafful13/robinhood-pilot">github.com/prafful13/robinhood-pilot</a>
+</footer>
+
+</body>
+</html>

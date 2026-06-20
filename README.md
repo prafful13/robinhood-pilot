@@ -1,4 +1,4 @@
-# Robinhood RSI Trader
+# Prafful's Sick of Trading
 
 An automated equity trading bot for [Robinhood's Agentic MCP API](https://robinhood.com/agentic), deployed on a local k3s cluster. Trades RSI mean-reversion signals on a configurable watchlist with a live Streamlit tax dashboard.
 

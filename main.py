@@ -20,7 +20,7 @@ import yaml
 
 from broker.robinhood import RobinhoodClient
 from db.database import SessionLocal, init_db
-from db.models import Trade
+from db.models import BotControl, BotStatus, PortfolioSnapshot, Trade
 from risk.manager import RiskManager
 from strategy.rsi import RSIMeanReversion
 
@@ -105,10 +105,15 @@ def record_trade(
         db.commit()
 
 
-async def run_cycle(broker: RobinhoodClient, strategy: RSIMeanReversion, risk: RiskManager, account: str):
+async def run_cycle(broker: RobinhoodClient, strategy: RSIMeanReversion, risk: RiskManager, account: str, token_data: dict | None = None):
     log.info("── running strategy cycle ──")
+    now = datetime.now(ET).replace(tzinfo=None)
 
     positions = await broker.get_positions(account)
+    portfolio = await broker.get_portfolio(account)
+    _record_portfolio(portfolio, now)
+    _record_bot_status(token_data, now)
+
     signals = await strategy.generate_signals(broker)
 
     if not signals:
@@ -182,6 +187,70 @@ def _touch_heartbeat() -> None:
     _HEARTBEAT.touch()
 
 
+def _is_paused() -> bool:
+    with SessionLocal() as db:
+        ctrl = db.get(BotControl, 1)
+        return bool(ctrl and ctrl.paused)
+
+
+async def _maybe_refresh_portfolio(broker: RobinhoodClient, account: str) -> None:
+    """Service a manual portfolio refresh request from the dashboard (within ~60s)."""
+    with SessionLocal() as db:
+        ctrl = db.get(BotControl, 1)
+        if not (ctrl and ctrl.portfolio_refresh_requested):
+            return
+        ctrl.portfolio_refresh_requested = False
+        db.commit()
+    try:
+        now = datetime.now(ET).replace(tzinfo=None)
+        portfolio = await broker.get_portfolio(account)
+        _record_portfolio(portfolio, now)
+        log.info("manual portfolio refresh completed")
+    except Exception as e:
+        log.warning(f"manual portfolio refresh failed: {e}")
+
+
+def _record_portfolio(portfolio: dict, now: datetime) -> None:
+    # API returns: total_value (full account), equity_value (stock positions), cash
+    equity = float(portfolio.get("total_value", 0) or 0)
+    cash = float(portfolio.get("cash", 0) or 0)
+    port_val = float(portfolio.get("equity_value", 0) or 0)
+    with SessionLocal() as db:
+        db.add(PortfolioSnapshot(
+            recorded_at=now,
+            equity=equity,
+            cash=cash,
+            portfolio_value=port_val,
+        ))
+        db.commit()
+
+
+def _record_bot_status(token_data: dict | None, now: datetime, error: str | None = None) -> None:
+    token_expires_at = None
+    token_saved_at = None
+    if token_data:
+        saved = token_data.get("saved_at", 0)
+        expires_in = token_data.get("expires_in", 0)
+        token_saved_at = datetime.fromtimestamp(saved, tz=ET).replace(tzinfo=None)
+        token_expires_at = datetime.fromtimestamp(saved + expires_in, tz=ET).replace(tzinfo=None)
+    with SessionLocal() as db:
+        existing = db.get(BotStatus, 1)
+        if existing:
+            existing.last_cycle_at = now
+            existing.token_expires_at = token_expires_at
+            existing.token_saved_at = token_saved_at
+            existing.last_error = error
+        else:
+            db.add(BotStatus(
+                id=1,
+                last_cycle_at=now,
+                token_expires_at=token_expires_at,
+                token_saved_at=token_saved_at,
+                last_error=error,
+            ))
+        db.commit()
+
+
 async def main():
     cfg = load_config()
     init_db()
@@ -211,20 +280,33 @@ async def main():
     async with RobinhoodClient(cfg) as broker:
         while not shutdown.is_set():
             _touch_heartbeat()
+            now = datetime.now(ET).replace(tzinfo=None)
+            token_data = broker.get_token_data()
 
             if is_market_open():
-                try:
-                    await run_cycle(broker, strategy, risk, account)
-                except Exception as e:
-                    log.error(f"cycle error: {e}", exc_info=True)
+                if _is_paused():
+                    log.info("bot is paused — skipping trade cycle")
+                    _record_bot_status(token_data, now)
+                else:
+                    try:
+                        await run_cycle(broker, strategy, risk, account, token_data)
+                    except Exception as e:
+                        log.error(f"cycle error: {e}", exc_info=True)
+                        _record_bot_status(token_data, now, str(e))
             else:
-                now = datetime.now(ET)
-                log.info(f"market closed ({now.strftime('%a %H:%M ET')}) — sleeping")
+                log.info(f"market closed ({datetime.now(ET).strftime('%a %H:%M ET')}) — sleeping")
+                _record_bot_status(token_data, now)
 
-            try:
-                await asyncio.wait_for(shutdown.wait(), timeout=CHECK_INTERVAL_SECS)
-            except asyncio.TimeoutError:
-                pass
+            # Sleep in 60-second chunks so manual portfolio refresh requests
+            # from the dashboard are serviced within ~60 seconds.
+            remaining = CHECK_INTERVAL_SECS
+            while remaining > 0 and not shutdown.is_set():
+                try:
+                    await asyncio.wait_for(shutdown.wait(), timeout=min(60, remaining))
+                    break
+                except asyncio.TimeoutError:
+                    remaining -= 60
+                    await _maybe_refresh_portfolio(broker, account)
 
     log.info("Bot shut down cleanly")
 

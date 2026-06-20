@@ -56,6 +56,11 @@ class RobinhoodClient:
         self._token = await get_access_token(self._cfg)
         self._token_loaded_at = time.time()
 
+    def get_token_data(self) -> dict | None:
+        """Return raw token dict (saved_at, expires_in) for dashboard status display."""
+        from broker.oauth import _load_tokens
+        return _load_tokens()
+
     def _next_id(self) -> int:
         self._call_id += 1
         return self._call_id

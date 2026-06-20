@@ -8,6 +8,8 @@ RUN pip install --no-cache-dir -r requirements.lock
 COPY db/          db/
 COPY tax/         tax/
 COPY vault/       vault/
+COPY .streamlit/  .streamlit/
+COPY config.yaml  .
 COPY dashboard.py .
 
 # DB_URL is injected at runtime via k8s Secret (see k8s/dashboard-deployment.yaml)
