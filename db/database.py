@@ -33,11 +33,12 @@ def init_db() -> None:
 
 
 def _migrate() -> None:
-    """Forward-only column additions for tables that already exist in prod."""
+    """Forward-only migrations for tables that already exist in prod."""
     with ENGINE.connect() as conn:
-        # bot_control.portfolio_refresh_requested added after initial deploy
         conn.execute(text(
             "ALTER TABLE bot_control "
             "ADD COLUMN IF NOT EXISTS portfolio_refresh_requested BOOLEAN NOT NULL DEFAULT FALSE"
         ))
+        # Remove snapshots written before the portfolio field-name fix (equity was always 0)
+        conn.execute(text("DELETE FROM portfolio_snapshots WHERE equity = 0"))
         conn.commit()

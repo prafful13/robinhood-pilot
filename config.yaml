@@ -1,4 +1,5 @@
 account_number: "YOUR_ACCOUNT_NUMBER"   # find in Robinhood → Account → Account number
+display_timezone: "America/Los_Angeles"  # IANA timezone for dashboard display
 
 watchlist:
   - GOOGL

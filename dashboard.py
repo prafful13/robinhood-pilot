@@ -4,7 +4,14 @@ from datetime import datetime, timedelta
 
 import pytz
 
-ET = pytz.timezone("America/New_York")
+ET = pytz.timezone("America/New_York")  # bot stores all timestamps in ET
+
+
+def _to_local(dt: datetime | None) -> datetime | None:
+    """Convert an ET-naive datetime to the display timezone (naive)."""
+    if dt is None:
+        return None
+    return ET.localize(dt).astimezone(_LOCAL_TZ).replace(tzinfo=None)
 
 from types import SimpleNamespace
 
@@ -139,6 +146,8 @@ def load_tax_summary(short_rate: float, long_rate: float):
 
 cfg = load_config()
 tax_cfg = cfg["tax"]
+_LOCAL_TZ = pytz.timezone(cfg.get("display_timezone", "America/New_York"))
+_TZ_ABBR = datetime.now(_LOCAL_TZ).strftime("%Z")  # e.g. "PDT", "PST", "ET"
 
 st.sidebar.title("Settings")
 st.sidebar.markdown(f"**Account:** ••••{cfg['account_number'][-4:]}")
@@ -152,7 +161,7 @@ st.sidebar.caption(f"Auto-refreshes every {REFRESH_SECS}s")
 # ── Header ─────────────────────────────────────────────────────────────────
 
 st.title("📈 Prafful's Sick of Trading")
-st.caption(f"Last updated: {datetime.now().strftime('%b %d %Y  %H:%M:%S')}")
+st.caption(f"Last updated: {datetime.now(_LOCAL_TZ).strftime(f'%b %d %Y  %H:%M:%S {_TZ_ABBR}')}")
 
 # ── Bot Status + Token Validity ────────────────────────────────────────────
 
@@ -172,11 +181,12 @@ with btn_col:
             st.rerun()
 
 if ctrl.paused:
-    paused_str = f" since {ctrl.paused_at.strftime('%b %d %H:%M ET')}" if ctrl.paused_at else ""
+    paused_str = f" since {_to_local(ctrl.paused_at).strftime(f'%b %d %H:%M {_TZ_ABBR}')}" if ctrl.paused_at else ""
     st.warning(f"Trading is **PAUSED**{paused_str}. The bot is running but will not place any orders. Click **Resume** to re-enable.")
 
 status = load_bot_status()
-now_et = datetime.now(ET).replace(tzinfo=None)  # all DB timestamps are ET-naive
+# Age comparisons: DB timestamps are ET-naive, so compare against ET now
+now_et = datetime.now(ET).replace(tzinfo=None)
 
 s1, s2, s3, s4 = st.columns(4)
 
@@ -202,7 +212,8 @@ if status and status.token_expires_at:
               delta="valid" if token_ok else "needs refresh",
               delta_color="normal" if token_ok else "inverse")
     if status.token_saved_at:
-        s3.metric("Token Issued", status.token_saved_at.strftime("%b %d %H:%M ET"))
+        issued_local = _to_local(status.token_saved_at)
+        s3.metric("Token Issued", issued_local.strftime(f"%b %d %H:%M {_TZ_ABBR}"))
 else:
     s2.metric("Token Expires In", "Unknown")
     s3.metric("Token Issued", "Unknown")
@@ -250,10 +261,13 @@ if not snapshots.empty:
             st.session_state["period"] = label
             selected_period = label
 
-    # Filter by period (snapshots stored as ET-naive)
+    # Convert ET-naive timestamps to local timezone for display and filtering
+    snapshots["recorded_at"] = snapshots["recorded_at"].apply(_to_local)
+    now_local = datetime.now(_LOCAL_TZ).replace(tzinfo=None)
+
     delta = PERIOD_OPTIONS[selected_period]
     if delta:
-        cutoff = now_et - delta
+        cutoff = now_local - delta
         df_period = snapshots[snapshots["recorded_at"] >= cutoff].copy()
     else:
         df_period = snapshots.copy()
