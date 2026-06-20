@@ -15,6 +15,11 @@ strategy:
   overbought: 70
   bar_interval: "15minute"
   lookback_days: 7
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal_period: 9
+  bb_period: 20
+  bb_std_dev: 2.0
 
 risk:
   max_trade_usd: 300.0

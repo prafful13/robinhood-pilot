@@ -63,6 +63,13 @@ class RuntimeConfig(Base):
     max_trade_usd: Mapped[float] = mapped_column(Float, nullable=False, default=300.0)
     max_positions: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     daily_loss_limit_usd: Mapped[float] = mapped_column(Float, nullable=False, default=50.0)
+    # MACD params (used by macd_crossover and rsi_macd_combo)
+    macd_fast: Mapped[int] = mapped_column(Integer, nullable=False, default=12)
+    macd_slow: Mapped[int] = mapped_column(Integer, nullable=False, default=26)
+    macd_signal_period: Mapped[int] = mapped_column(Integer, nullable=False, default=9)
+    # Bollinger Bands params (used by bollinger_bands)
+    bb_period: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
+    bb_std_dev: Mapped[float] = mapped_column(Float, nullable=False, default=2.0)
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 

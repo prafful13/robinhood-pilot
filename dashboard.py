@@ -151,13 +151,27 @@ def load_runtime_config() -> SimpleNamespace | None:
     return SimpleNamespace(
         strategy=rc.strategy, rsi_period=rc.rsi_period,
         oversold=rc.oversold, overbought=rc.overbought,
+        macd_fast=rc.macd_fast, macd_slow=rc.macd_slow, macd_signal_period=rc.macd_signal_period,
+        bb_period=rc.bb_period, bb_std_dev=rc.bb_std_dev,
         max_trade_usd=rc.max_trade_usd, max_positions=rc.max_positions,
         daily_loss_limit_usd=rc.daily_loss_limit_usd, updated_at=rc.updated_at,
     )
 
 
+STRATEGY_OPTIONS = {
+    "RSI Mean-Reversion":  "rsi_mean_reversion",
+    "MACD Crossover":      "macd_crossover",
+    "Bollinger Bands":     "bollinger_bands",
+    "RSI + MACD Combo":    "rsi_macd_combo",
+}
+_STRATEGY_KEYS = list(STRATEGY_OPTIONS.keys())
+_STRATEGY_VALS = list(STRATEGY_OPTIONS.values())
+
+
 def _save_runtime_config(
     strategy: str, rsi_period: int, oversold: int, overbought: int,
+    macd_fast: int, macd_slow: int, macd_signal_period: int,
+    bb_period: int, bb_std_dev: float,
     max_trade_usd: float, max_positions: int, daily_loss_limit_usd: float,
 ) -> None:
     now_et = datetime.now(ET).replace(tzinfo=None)
@@ -168,6 +182,11 @@ def _save_runtime_config(
             rc.rsi_period = rsi_period
             rc.oversold = oversold
             rc.overbought = overbought
+            rc.macd_fast = macd_fast
+            rc.macd_slow = macd_slow
+            rc.macd_signal_period = macd_signal_period
+            rc.bb_period = bb_period
+            rc.bb_std_dev = bb_std_dev
             rc.max_trade_usd = max_trade_usd
             rc.max_positions = max_positions
             rc.daily_loss_limit_usd = daily_loss_limit_usd
@@ -176,6 +195,8 @@ def _save_runtime_config(
             db.add(RuntimeConfig(
                 id=1, strategy=strategy, rsi_period=rsi_period,
                 oversold=oversold, overbought=overbought,
+                macd_fast=macd_fast, macd_slow=macd_slow, macd_signal_period=macd_signal_period,
+                bb_period=bb_period, bb_std_dev=bb_std_dev,
                 max_trade_usd=max_trade_usd, max_positions=max_positions,
                 daily_loss_limit_usd=daily_loss_limit_usd, updated_at=now_et,
             ))
@@ -200,23 +221,52 @@ st.sidebar.markdown("##### Strategy & Risk")
 rc = load_runtime_config()
 s_def, r_def = cfg["strategy"], cfg["risk"]
 
+current_strategy_key = rc.strategy if rc else "rsi_mean_reversion"
+current_strategy_idx = _STRATEGY_VALS.index(current_strategy_key) if current_strategy_key in _STRATEGY_VALS else 0
+
 with st.sidebar:
     with st.form("runtime_config_form"):
-        st.selectbox("Strategy", ["RSI Mean-Reversion"], index=0)
+        strategy_label = st.selectbox("Strategy", _STRATEGY_KEYS, index=current_strategy_idx)
 
-        st.markdown("**RSI Parameters**")
+        st.markdown("**RSI** *(RSI, RSI+MACD)*")
         rsi_period = st.number_input(
             "Period", min_value=2, max_value=50, step=1,
             value=rc.rsi_period if rc else s_def["rsi_period"],
         )
         ov_col, ob_col = st.columns(2)
         oversold   = ov_col.number_input(
-            "Buy below", min_value=1, max_value=49, step=1,
+            "Buy <", min_value=1, max_value=49, step=1,
             value=rc.oversold if rc else s_def["oversold"],
         )
         overbought = ob_col.number_input(
-            "Sell above", min_value=51, max_value=99, step=1,
+            "Sell >", min_value=51, max_value=99, step=1,
             value=rc.overbought if rc else s_def["overbought"],
+        )
+
+        st.markdown("**MACD** *(MACD, RSI+MACD)*")
+        mf_col, ms_col, msig_col = st.columns(3)
+        macd_fast = mf_col.number_input(
+            "Fast", min_value=2, max_value=50, step=1,
+            value=rc.macd_fast if rc else s_def.get("macd_fast", 12),
+        )
+        macd_slow = ms_col.number_input(
+            "Slow", min_value=3, max_value=200, step=1,
+            value=rc.macd_slow if rc else s_def.get("macd_slow", 26),
+        )
+        macd_sig = msig_col.number_input(
+            "Signal", min_value=2, max_value=50, step=1,
+            value=rc.macd_signal_period if rc else s_def.get("macd_signal_period", 9),
+        )
+
+        st.markdown("**Bollinger Bands** *(BB)*")
+        bb_p_col, bb_s_col = st.columns(2)
+        bb_period = bb_p_col.number_input(
+            "Period", min_value=5, max_value=100, step=1,
+            value=rc.bb_period if rc else s_def.get("bb_period", 20),
+        )
+        bb_std = bb_s_col.number_input(
+            "Std devs", min_value=0.5, max_value=5.0, step=0.5, format="%.1f",
+            value=float(rc.bb_std_dev if rc else s_def.get("bb_std_dev", 2.0)),
         )
 
         st.markdown("**Risk Limits**")
@@ -238,8 +288,10 @@ with st.sidebar:
 
 if submitted:
     _save_runtime_config(
-        strategy="rsi_mean_reversion",
+        strategy=STRATEGY_OPTIONS[strategy_label],
         rsi_period=int(rsi_period), oversold=int(oversold), overbought=int(overbought),
+        macd_fast=int(macd_fast), macd_slow=int(macd_slow), macd_signal_period=int(macd_sig),
+        bb_period=int(bb_period), bb_std_dev=float(bb_std),
         max_trade_usd=float(max_trade), max_positions=int(max_pos),
         daily_loss_limit_usd=float(daily_loss),
     )
@@ -259,12 +311,20 @@ long_rate  = long_pct  / 100
 st.sidebar.divider()
 with st.sidebar.expander("Strategy Reference"):
     st.markdown("""
-**RSI Mean-Reversion** · 15-min bars · 7-day lookback · Wilder's EWM
+All strategies run on 15-min bars, 7-day lookback, Mon–Fri 9:30–16:00 ET.
+Parameters above are live — bot picks them up on the next cycle.
 
-- **Buy:** RSI drops below the "Buy below" threshold (oversold)
-- **Sell:** RSI rises above the "Sell above" threshold (overbought)
-- Market hours: Mon–Fri 9:30–16:00 ET, polls every 15 minutes
-- All parameters above are live — bot picks them up on the next cycle
+**RSI Mean-Reversion**
+Buy when RSI < oversold; sell when RSI > overbought. Wilder's EWM.
+
+**MACD Crossover**
+Buy when MACD histogram flips positive (bullish crossover); sell when it flips negative. MACD = EMA(fast) − EMA(slow), signal = EMA(MACD, signal).
+
+**Bollinger Bands**
+Buy when price closes below the lower band (middle − N·σ); sell when above upper band. Mean-reversion on price vs. rolling volatility.
+
+**RSI + MACD Combo**
+Fires RSI signals only when MACD histogram confirms direction. Fewer trades, fewer false positives.
 """)
 
 st.sidebar.caption(f"Auto-refreshes every {REFRESH_SECS}s")

@@ -48,6 +48,11 @@ def init_runtime_config(cfg: dict) -> None:
                 max_trade_usd=r["max_trade_usd"],
                 max_positions=r["max_positions"],
                 daily_loss_limit_usd=r["daily_loss_limit_usd"],
+                macd_fast=s.get("macd_fast", 12),
+                macd_slow=s.get("macd_slow", 26),
+                macd_signal_period=s.get("macd_signal_period", 9),
+                bb_period=s.get("bb_period", 20),
+                bb_std_dev=s.get("bb_std_dev", 2.0),
             ))
             db.commit()
         except Exception:
@@ -63,4 +68,16 @@ def _migrate() -> None:
         ))
         # Remove snapshots written before the portfolio field-name fix (equity was always 0)
         conn.execute(text("DELETE FROM portfolio_snapshots WHERE equity = 0"))
+        # MACD + Bollinger Bands columns added to runtime_config
+        for col, coltype, default in [
+            ("macd_fast", "INTEGER", "12"),
+            ("macd_slow", "INTEGER", "26"),
+            ("macd_signal_period", "INTEGER", "9"),
+            ("bb_period", "INTEGER", "20"),
+            ("bb_std_dev", "FLOAT", "2.0"),
+        ]:
+            conn.execute(text(
+                f"ALTER TABLE runtime_config "
+                f"ADD COLUMN IF NOT EXISTS {col} {coltype} NOT NULL DEFAULT {default}"
+            ))
         conn.commit()

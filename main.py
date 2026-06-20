@@ -22,7 +22,11 @@ from broker.robinhood import RobinhoodClient
 from db.database import SessionLocal, init_db, init_runtime_config
 from db.models import BotControl, BotStatus, PortfolioSnapshot, RuntimeConfig, Trade
 from risk.manager import RiskManager
+from strategy.base import Strategy
+from strategy.bollinger import BollingerBands
+from strategy.macd import MACDCrossover
 from strategy.rsi import RSIMeanReversion
+from strategy.rsi_macd import RSIMACDCombo
 
 _LOG_FMT = "%(asctime)s  %(levelname)-7s  %(message)s"
 _LOG_DATE = "%Y-%m-%d %H:%M:%S"
@@ -189,11 +193,17 @@ def _apply_runtime_config(cfg: dict) -> dict:
             return cfg
         return {
             **cfg,
+            "_runtime_strategy": rc.strategy,
             "strategy": {
                 **cfg["strategy"],
                 "rsi_period": rc.rsi_period,
                 "oversold": rc.oversold,
                 "overbought": rc.overbought,
+                "macd_fast": rc.macd_fast,
+                "macd_slow": rc.macd_slow,
+                "macd_signal_period": rc.macd_signal_period,
+                "bb_period": rc.bb_period,
+                "bb_std_dev": rc.bb_std_dev,
             },
             "risk": {
                 **cfg["risk"],
@@ -204,6 +214,17 @@ def _apply_runtime_config(cfg: dict) -> dict:
         }
     except Exception:
         return cfg
+
+
+def _make_strategy(cfg: dict) -> Strategy:
+    key = cfg.get("_runtime_strategy", "rsi_mean_reversion")
+    if key == "macd_crossover":
+        return MACDCrossover(cfg)
+    if key == "bollinger_bands":
+        return BollingerBands(cfg)
+    if key == "rsi_macd_combo":
+        return RSIMACDCombo(cfg)
+    return RSIMeanReversion(cfg)
 
 
 _HEARTBEAT = Path("/tmp/heartbeat")
@@ -310,7 +331,7 @@ async def main():
 
             # Rebuild strategy and risk each cycle so dashboard config changes take effect immediately
             effective_cfg = _apply_runtime_config(cfg)
-            strategy = RSIMeanReversion(effective_cfg)
+            strategy = _make_strategy(effective_cfg)
             risk = RiskManager(effective_cfg)
 
             if is_market_open():
