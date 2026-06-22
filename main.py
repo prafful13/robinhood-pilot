@@ -20,7 +20,7 @@ import yaml
 
 from broker.robinhood import RobinhoodClient
 from db.database import SessionLocal, init_db, init_runtime_config
-from db.models import BotControl, BotStatus, PortfolioSnapshot, RuntimeConfig, Trade
+from db.models import BotControl, BotStatus, PortfolioSnapshot, RuntimeConfig, SymbolSnapshot, Trade
 from risk.manager import RiskManager
 from strategy.base import Strategy
 from strategy.bollinger import BollingerBands
@@ -119,6 +119,7 @@ async def run_cycle(broker: RobinhoodClient, strategy: RSIMeanReversion, risk: R
     _record_bot_status(token_data, now)
 
     signals = await strategy.generate_signals(broker)
+    _record_symbol_snapshots(getattr(strategy, "last_metrics", {}), now)
 
     if not signals:
         log.info("no signals this cycle")
@@ -257,6 +258,23 @@ async def _maybe_refresh_portfolio(broker: RobinhoodClient, account: str) -> Non
         log.warning(f"manual portfolio refresh failed: {e}")
 
 
+def _record_symbol_snapshots(metrics: dict, now: datetime) -> None:
+    if not metrics:
+        return
+    with SessionLocal() as db:
+        for sym, data in metrics.items():
+            db.add(SymbolSnapshot(
+                symbol=sym,
+                recorded_at=now,
+                rsi=data.get("rsi"),
+                price=data.get("price"),
+                signal=data.get("signal"),
+                macd_hist=data.get("macd_hist"),
+                bb_pct_b=data.get("bb_pct_b"),
+            ))
+        db.commit()
+
+
 def _record_portfolio(portfolio: dict, now: datetime) -> None:
     # API returns: total_value (full account), equity_value (stock positions), cash
     equity = float(portfolio.get("total_value", 0) or 0)
@@ -357,6 +375,7 @@ async def main():
                     break
                 except asyncio.TimeoutError:
                     remaining -= 60
+                    _touch_heartbeat()
                     await _maybe_refresh_portfolio(broker, account)
 
     log.info("Bot shut down cleanly")
