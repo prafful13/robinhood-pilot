@@ -85,9 +85,10 @@
 
 <div class="hero">
   <h1>Prafful's <span>Sick of Trading</span></h1>
-  <p>An automated mean-reversion trading bot for Robinhood, using RSI(14) signals, deployed on a local k3s cluster with a real-time Streamlit dashboard for control, monitoring, and tax tracking.</p>
+  <p>An automated equity trading bot for Robinhood, with four switchable strategies (RSI, MACD, Bollinger Bands, RSI+MACD), deployed on a local k3s cluster with a real-time Streamlit dashboard for monitoring, control, and tax tracking.</p>
   <div class="badge-row">
-    <span class="badge green">RSI(14) Mean-Reversion</span>
+    <span class="badge green">Live Trading</span>
+    <span class="badge green">4 Strategies</span>
     <span class="badge">Python 3.13</span>
     <span class="badge">k3s / Kubernetes</span>
     <span class="badge">PostgreSQL</span>
@@ -100,13 +101,13 @@
 <section id="screenshots">
   <h2>Dashboard</h2>
   <p style="color:var(--muted); margin-bottom:1.5rem; font-size:0.9rem;">
-    The local Streamlit dashboard shows bot health, token expiry, portfolio equity over selectable periods (1D → Max), cumulative P&amp;L, tax obligations, and full trade history — auto-refreshing every 60 seconds. Strategy and risk parameters are editable from the sidebar without a bot restart.
+    The local Streamlit dashboard runs at <code style="font-size:0.85rem;">http://localhost:30501</code>. It shows bot health, token expiry, a live per-symbol RSI monitor, strategy-specific indicator charts (MACD histogram or Bollinger %B), portfolio equity over selectable periods (1D → Max), cumulative P&amp;L, tax obligations, and full trade history — auto-refreshing every 60 seconds. Strategy, parameters, and risk limits are switchable from the sidebar without a bot restart.
   </p>
   <div class="screenshots">
-    <div class="screenshot-placeholder">📊 Portfolio Value &amp; P&amp;L Chart</div>
-    <div class="screenshot-placeholder">🤖 Bot Status &amp; Pause/Resume</div>
-    <div class="screenshot-placeholder">💰 Tax Obligation Summary</div>
-    <div class="screenshot-placeholder">⚙ Live Strategy &amp; Risk Controls</div>
+    <img src="screenshots/dashboard-hero.png"     alt="Dashboard overview"            style="width:100%; border-radius:10px; border:1px solid var(--border);" />
+    <img src="screenshots/dashboard-rsi-macd.png" alt="RSI Monitor + MACD histogram"  style="width:100%; border-radius:10px; border:1px solid var(--border);" />
+    <img src="screenshots/dashboard-trades.png"   alt="Trade history"                 style="width:100%; border-radius:10px; border:1px solid var(--border);" />
+    <img src="screenshots/dashboard-chart.png"    alt="Portfolio P&amp;L chart"       style="width:100%; border-radius:10px; border:1px solid var(--border);" />
   </div>
 </section>
 
@@ -121,8 +122,8 @@
     </div>
     <div class="feature-card">
       <div class="icon">📈</div>
-      <h3>RSI(14) Signals</h3>
-      <p>Wilder's EWM RSI on 15-minute bars. Buy when RSI &lt; 30 (oversold), sell when RSI &gt; 70 (overbought).</p>
+      <h3>4 Switchable Strategies</h3>
+      <p>RSI Mean-Reversion, MACD Crossover, Bollinger Bands, RSI+MACD Combo — switch live from the dashboard. Bot picks up the new strategy on the next cycle.</p>
     </div>
     <div class="feature-card">
       <div class="icon">🛡️</div>
@@ -146,8 +147,8 @@
     </div>
     <div class="feature-card">
       <div class="icon">📊</div>
-      <h3>Streamlit Dashboard</h3>
-      <p>Portfolio equity chart (1D–Max), Pause/Resume bot, manual refresh, trade history, tax calculator, and live strategy/risk controls.</p>
+      <h3>Watchlist RSI Monitor</h3>
+      <p>Live RSI(14) bar chart for all watchlist symbols with buy/sell threshold zones — always visible. A second chart shows the active strategy's own indicator (MACD histogram or Bollinger %B).</p>
     </div>
     <div class="feature-card">
       <div class="icon">⏸️</div>
