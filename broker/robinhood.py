@@ -151,15 +151,27 @@ class RobinhoodClient:
             "id": self._next_id(),
         }
         resp = await self._post(payload)
-        raw = resp.get("result", {}).get("content", [{}])[0].get("text", "{}")
-        return json.loads(raw)
+        content = resp.get("result", {}).get("content") or [{}]
+        raw = (content[0].get("text") or "").strip()
+        if not raw:
+            return {}
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            log.warning("call_tool(%s): non-JSON response raw=%r", name, raw[:200])
+            return {}
 
     # ── Public API ──────────────────────────────────────────────────────────
 
     async def get_quotes(self, symbols: list[str]) -> dict[str, dict]:
         result = await self.call_tool("get_equity_quotes", {"symbols": symbols})
-        quotes = result.get("data", {}).get("quotes", [])
-        return {q["symbol"]: q for q in quotes}
+        # API returns data.results[].quote (not data.quotes)
+        out: dict[str, dict] = {}
+        for item in result.get("data", {}).get("results", []):
+            q = item.get("quote", {})
+            if sym := q.get("symbol"):
+                out[sym] = q
+        return out
 
     async def get_historicals(self, symbols: list[str], interval: str = "15minute", lookback_days: int = 7) -> dict[str, list]:
         start = (datetime.now(pytz.UTC) - timedelta(days=lookback_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -171,7 +183,7 @@ class RobinhoodClient:
         })
         out = {}
         for item in result.get("data", {}).get("results", []):
-            out[item["symbol"]] = item.get("historicals", [])
+            out[item["symbol"]] = item.get("bars", [])
         return out
 
     async def get_positions(self, account_number: str) -> list[dict]:

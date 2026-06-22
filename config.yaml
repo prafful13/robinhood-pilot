@@ -1,4 +1,4 @@
-account_number: "YOUR_ACCOUNT_NUMBER"   # find in Robinhood → Account → Account number
+account_number: "402861090"
 display_timezone: "America/Los_Angeles"  # IANA timezone for dashboard display
 
 watchlist:
@@ -13,7 +13,7 @@ strategy:
   rsi_period: 14
   oversold: 30
   overbought: 70
-  bar_interval: "15minute"
+  bar_interval: "10minute"
   lookback_days: 7
   macd_fast: 12
   macd_slow: 26
