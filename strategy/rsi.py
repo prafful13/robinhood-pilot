@@ -7,7 +7,11 @@ RSI Mean Reversion strategy.
 
 import pandas as pd
 
+import logging
+
 from strategy.base import Signal, Strategy
+
+log = logging.getLogger(__name__)
 
 
 class RSIMeanReversion(Strategy):
@@ -39,6 +43,7 @@ class RSIMeanReversion(Strategy):
 
     async def generate_signals(self, broker) -> list[Signal]:
         signals: list[Signal] = []
+        self.last_metrics: dict = {sym: {"rsi": None, "price": None, "signal": None} for sym in self.watchlist}
 
         historicals = await broker.get_historicals(
             self.watchlist, self.bar_interval, self.lookback_days
@@ -48,7 +53,7 @@ class RSIMeanReversion(Strategy):
         for symbol in self.watchlist:
             bars = historicals.get(symbol, [])
             if len(bars) < self.rsi_period + 2:
-                print(f"  {symbol}: not enough bars ({len(bars)}), skipping")
+                log.warning("%s: only %d bars, need %d — skipping", symbol, len(bars), self.rsi_period + 2)
                 continue
 
             rsi_series = self._compute_rsi(bars)
@@ -58,13 +63,23 @@ class RSIMeanReversion(Strategy):
             current_rsi = float(rsi_series.dropna().iloc[-1])
             prev_rsi = float(rsi_series.dropna().iloc[-2])
             quote = quotes.get(symbol, {})
-            price = float(quote.get("last_trade_price", 0))
+            price = float(quote.get("last_trade_price") or 0)
+
+            # Always record RSI even if price is unavailable
+            self.last_metrics[symbol]["rsi"] = round(current_rsi, 2)
+            self.last_metrics[symbol]["macd_hist"] = None
+            self.last_metrics[symbol]["bb_pct_b"] = None
+            if price > 0:
+                self.last_metrics[symbol]["price"] = price
 
             if price <= 0:
                 continue
 
+            signal: str | None = None
+
             # Buy: RSI crossed below oversold
             if current_rsi < self.oversold:
+                signal = "buy"
                 signals.append(Signal(
                     symbol=symbol,
                     side="buy",
@@ -75,6 +90,7 @@ class RSIMeanReversion(Strategy):
 
             # Sell: RSI crossed above overbought
             elif current_rsi > self.overbought:
+                signal = "sell"
                 signals.append(Signal(
                     symbol=symbol,
                     side="sell",
@@ -82,5 +98,11 @@ class RSIMeanReversion(Strategy):
                     price=price,
                     reason=f"RSI {current_rsi:.1f} > {self.overbought}",
                 ))
+
+            self.last_metrics[symbol] = {
+                "rsi": round(current_rsi, 2),
+                "price": price,
+                "signal": signal,
+            }
 
         return signals

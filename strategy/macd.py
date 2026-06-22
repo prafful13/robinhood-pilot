@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
+
 import pandas as pd
 
 from strategy.base import Signal, Strategy
+
+log = logging.getLogger(__name__)
 
 
 class MACDCrossover(Strategy):
@@ -19,38 +23,58 @@ class MACDCrossover(Strategy):
 
     async def generate_signals(self, broker) -> list[Signal]:
         signals: list[Signal] = []
+        self.last_metrics: dict = {
+            sym: {"rsi": None, "price": None, "signal": None, "macd_hist": None, "bb_pct_b": None}
+            for sym in self.watchlist
+        }
+
         historicals = await broker.get_historicals(self.watchlist, self.bar_interval, self.lookback_days)
         quotes = await broker.get_quotes(self.watchlist)
+        min_bars = self.slow + self.signal_period + 2
 
         for symbol in self.watchlist:
             bars = historicals.get(symbol, [])
-            price = float(quotes.get(symbol, {}).get("last_trade_price", 0))
-            if price <= 0 or len(bars) < self.slow + self.signal_period + 2:
+            if not bars:
                 continue
-            sig = self._compute(symbol, bars, price)
-            if sig:
-                signals.append(sig)
+
+            closes = pd.to_numeric(
+                pd.Series([b["close_price"] for b in bars]), errors="coerce"
+            ).dropna().reset_index(drop=True)
+
+            price = float(quotes.get(symbol, {}).get("last_trade_price") or 0)
+            rsi_val = Strategy._rsi(closes, 14)
+
+            if rsi_val is not None:
+                self.last_metrics[symbol]["rsi"] = round(rsi_val, 2)
+            if price > 0:
+                self.last_metrics[symbol]["price"] = price
+
+            if len(closes) < min_bars:
+                log.warning("%s: only %d bars for MACD, need %d", symbol, len(closes), min_bars)
+                continue
+
+            ema_fast = closes.ewm(span=self.fast, adjust=False).mean()
+            ema_slow = closes.ewm(span=self.slow, adjust=False).mean()
+            macd_line = ema_fast - ema_slow
+            signal_line = macd_line.ewm(span=self.signal_period, adjust=False).mean()
+            histogram = macd_line - signal_line
+
+            curr_h = float(histogram.iloc[-1])
+            prev_h = float(histogram.iloc[-2])
+            self.last_metrics[symbol]["macd_hist"] = round(curr_h, 6)
+
+            if price <= 0:
+                continue
+
+            sig: str | None = None
+            if prev_h < 0 and curr_h > 0:
+                sig = "buy"
+                signals.append(Signal(symbol=symbol, side="buy", price=price, rsi=curr_h,
+                                      reason=f"MACD bullish crossover hist={curr_h:.4f}"))
+            elif prev_h > 0 and curr_h < 0:
+                sig = "sell"
+                signals.append(Signal(symbol=symbol, side="sell", price=price, rsi=curr_h,
+                                      reason=f"MACD bearish crossover hist={curr_h:.4f}"))
+            self.last_metrics[symbol]["signal"] = sig
 
         return signals
-
-    def _compute(self, symbol: str, bars: list[dict], price: float) -> Signal | None:
-        closes = pd.to_numeric(
-            pd.Series([b["close_price"] for b in bars]), errors="coerce"
-        ).dropna().reset_index(drop=True)
-
-        ema_fast = closes.ewm(span=self.fast, adjust=False).mean()
-        ema_slow = closes.ewm(span=self.slow, adjust=False).mean()
-        macd_line = ema_fast - ema_slow
-        signal_line = macd_line.ewm(span=self.signal_period, adjust=False).mean()
-        histogram = macd_line - signal_line
-
-        curr_h = float(histogram.iloc[-1])
-        prev_h = float(histogram.iloc[-2])
-
-        if prev_h < 0 and curr_h > 0:
-            return Signal(symbol=symbol, side="buy", price=price, rsi=curr_h,
-                          reason=f"MACD bullish crossover hist={curr_h:.4f}")
-        if prev_h > 0 and curr_h < 0:
-            return Signal(symbol=symbol, side="sell", price=price, rsi=curr_h,
-                          reason=f"MACD bearish crossover hist={curr_h:.4f}")
-        return None

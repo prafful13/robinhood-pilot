@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
+
 import pandas as pd
 
 from strategy.base import Signal, Strategy
+
+log = logging.getLogger(__name__)
 
 
 class BollingerBands(Strategy):
@@ -18,41 +22,61 @@ class BollingerBands(Strategy):
 
     async def generate_signals(self, broker) -> list[Signal]:
         signals: list[Signal] = []
+        self.last_metrics: dict = {
+            sym: {"rsi": None, "price": None, "signal": None, "macd_hist": None, "bb_pct_b": None}
+            for sym in self.watchlist
+        }
+
         historicals = await broker.get_historicals(self.watchlist, self.bar_interval, self.lookback_days)
         quotes = await broker.get_quotes(self.watchlist)
 
         for symbol in self.watchlist:
             bars = historicals.get(symbol, [])
-            price = float(quotes.get(symbol, {}).get("last_trade_price", 0))
-            if price <= 0 or len(bars) < self.period + 2:
+            if not bars:
                 continue
-            sig = self._compute(symbol, bars, price)
-            if sig:
-                signals.append(sig)
+
+            closes = pd.to_numeric(
+                pd.Series([b["close_price"] for b in bars]), errors="coerce"
+            ).dropna().reset_index(drop=True)
+
+            price = float(quotes.get(symbol, {}).get("last_trade_price") or 0)
+            rsi_val = Strategy._rsi(closes, 14)
+
+            if rsi_val is not None:
+                self.last_metrics[symbol]["rsi"] = round(rsi_val, 2)
+            if price > 0:
+                self.last_metrics[symbol]["price"] = price
+
+            if len(closes) < self.period + 2:
+                log.warning("%s: only %d bars for BB, need %d", symbol, len(closes), self.period + 2)
+                continue
+
+            middle = closes.rolling(self.period).mean()
+            std = closes.rolling(self.period).std()
+            upper = float((middle + self.num_std * std).iloc[-1])
+            lower = float((middle - self.num_std * std).iloc[-1])
+
+            if pd.isna(lower) or (upper - lower) == 0:
+                continue
+
+            # %B: 0 = lower band, 50 = middle, 100 = upper band (>100 or <0 = outside bands)
+            pct_b = (price - lower) / (upper - lower) * 100
+            self.last_metrics[symbol]["bb_pct_b"] = round(pct_b, 2)
+
+            if price <= 0:
+                continue
+
+            sig: str | None = None
+            if price < lower:
+                sig = "buy"
+                band_pos = (price - float(middle.iloc[-1])) / ((upper - lower) / 2)
+                signals.append(Signal(symbol=symbol, side="buy", price=price, rsi=band_pos,
+                                      reason=f"${price:.2f} < lower band ${lower:.2f} (%B={pct_b:.1f})"))
+            elif price > upper:
+                sig = "sell"
+                band_pos = (price - float(middle.iloc[-1])) / ((upper - lower) / 2)
+                signals.append(Signal(symbol=symbol, side="sell", price=price, rsi=band_pos,
+                                      reason=f"${price:.2f} > upper band ${upper:.2f} (%B={pct_b:.1f})"))
+            self.last_metrics[symbol]["signal"] = sig
 
         return signals
-
-    def _compute(self, symbol: str, bars: list[dict], price: float) -> Signal | None:
-        closes = pd.to_numeric(
-            pd.Series([b["close_price"] for b in bars]), errors="coerce"
-        ).dropna().reset_index(drop=True)
-
-        middle = closes.rolling(self.period).mean()
-        std = closes.rolling(self.period).std()
-        upper = (middle + self.num_std * std).iloc[-1]
-        lower = (middle - self.num_std * std).iloc[-1]
-        mid = middle.iloc[-1]
-
-        if pd.isna(lower) or (upper - lower) == 0:
-            return None
-
-        # Normalized position: 0 = middle, ±1 = band edges, beyond ±1 = outside bands
-        band_pos = (price - mid) / ((upper - lower) / 2)
-
-        if price < lower:
-            return Signal(symbol=symbol, side="buy", price=price, rsi=band_pos,
-                          reason=f"${price:.2f} < lower band ${lower:.2f} (pos={band_pos:.2f}σ)")
-        if price > upper:
-            return Signal(symbol=symbol, side="sell", price=price, rsi=band_pos,
-                          reason=f"${price:.2f} > upper band ${upper:.2f} (pos={band_pos:.2f}σ)")
-        return None

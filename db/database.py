@@ -80,4 +80,8 @@ def _migrate() -> None:
                 f"ALTER TABLE runtime_config "
                 f"ADD COLUMN IF NOT EXISTS {col} {coltype} NOT NULL DEFAULT {default}"
             ))
+        for col, coltype in [("macd_hist", "FLOAT"), ("bb_pct_b", "FLOAT")]:
+            conn.execute(text(
+                f"ALTER TABLE symbol_snapshots ADD COLUMN IF NOT EXISTS {col} {coltype}"
+            ))
         conn.commit()

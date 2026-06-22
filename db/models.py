@@ -81,3 +81,17 @@ class BotControl(Base):
     paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     paused_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     portfolio_refresh_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class SymbolSnapshot(Base):
+    """Per-symbol RSI / price recorded by the bot after each strategy cycle."""
+    __tablename__ = "symbol_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    rsi: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    signal: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)  # 'buy', 'sell', or None
+    macd_hist: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    bb_pct_b: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0=lower band, 50=mid, 100=upper

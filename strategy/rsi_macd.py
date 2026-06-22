@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
+
 import pandas as pd
 
 from strategy.base import Signal, Strategy
+
+log = logging.getLogger(__name__)
 
 
 class RSIMACDCombo(Strategy):
@@ -28,49 +32,56 @@ class RSIMACDCombo(Strategy):
 
     async def generate_signals(self, broker) -> list[Signal]:
         signals: list[Signal] = []
+        self.last_metrics: dict = {
+            sym: {"rsi": None, "price": None, "signal": None, "macd_hist": None, "bb_pct_b": None}
+            for sym in self.watchlist
+        }
+
         historicals = await broker.get_historicals(self.watchlist, self.bar_interval, self.lookback_days)
         quotes = await broker.get_quotes(self.watchlist)
-
         min_bars = max(self.rsi_period, self.slow + self.signal_period) + 2
+
         for symbol in self.watchlist:
             bars = historicals.get(symbol, [])
-            price = float(quotes.get(symbol, {}).get("last_trade_price", 0))
-            if price <= 0 or len(bars) < min_bars:
+            if not bars:
                 continue
-            sig = self._compute(symbol, bars, price)
-            if sig:
-                signals.append(sig)
+
+            closes = pd.to_numeric(
+                pd.Series([b["close_price"] for b in bars]), errors="coerce"
+            ).dropna().reset_index(drop=True)
+
+            price = float(quotes.get(symbol, {}).get("last_trade_price") or 0)
+            rsi_val = Strategy._rsi(closes, self.rsi_period)
+
+            if rsi_val is not None:
+                self.last_metrics[symbol]["rsi"] = round(rsi_val, 2)
+            if price > 0:
+                self.last_metrics[symbol]["price"] = price
+
+            if len(closes) < min_bars:
+                log.warning("%s: only %d bars, need %d", symbol, len(closes), min_bars)
+                continue
+
+            macd = closes.ewm(span=self.fast, adjust=False).mean() - closes.ewm(span=self.slow, adjust=False).mean()
+            histogram = float((macd - macd.ewm(span=self.signal_period, adjust=False).mean()).iloc[-1])
+            self.last_metrics[symbol]["macd_hist"] = round(histogram, 6)
+
+            if rsi_val is None or price <= 0:
+                continue
+
+            sig: str | None = None
+            if rsi_val < self.oversold and histogram > 0:
+                sig = "buy"
+                signals.append(Signal(
+                    symbol=symbol, side="buy", price=price, rsi=rsi_val,
+                    reason=f"RSI {rsi_val:.1f} < {self.oversold} + MACD hist={histogram:.4f} (bullish)",
+                ))
+            elif rsi_val > self.overbought and histogram < 0:
+                sig = "sell"
+                signals.append(Signal(
+                    symbol=symbol, side="sell", price=price, rsi=rsi_val,
+                    reason=f"RSI {rsi_val:.1f} > {self.overbought} + MACD hist={histogram:.4f} (bearish)",
+                ))
+            self.last_metrics[symbol]["signal"] = sig
 
         return signals
-
-    def _compute(self, symbol: str, bars: list[dict], price: float) -> Signal | None:
-        closes = pd.to_numeric(
-            pd.Series([b["close_price"] for b in bars]), errors="coerce"
-        ).dropna().reset_index(drop=True)
-
-        # Wilder's RSI
-        delta = closes.diff()
-        avg_gain = delta.clip(lower=0).ewm(
-            alpha=1 / self.rsi_period, min_periods=self.rsi_period, adjust=False
-        ).mean()
-        avg_loss = (-delta.clip(upper=0)).ewm(
-            alpha=1 / self.rsi_period, min_periods=self.rsi_period, adjust=False
-        ).mean()
-        rs = avg_gain / avg_loss.replace(0, float("nan"))
-        current_rsi = float((100 - 100 / (1 + rs)).dropna().iloc[-1])
-
-        # MACD histogram
-        macd = closes.ewm(span=self.fast, adjust=False).mean() - closes.ewm(span=self.slow, adjust=False).mean()
-        histogram = float((macd - macd.ewm(span=self.signal_period, adjust=False).mean()).iloc[-1])
-
-        if current_rsi < self.oversold and histogram > 0:
-            return Signal(
-                symbol=symbol, side="buy", price=price, rsi=current_rsi,
-                reason=f"RSI {current_rsi:.1f} < {self.oversold} + MACD hist={histogram:.4f} (bullish)",
-            )
-        if current_rsi > self.overbought and histogram < 0:
-            return Signal(
-                symbol=symbol, side="sell", price=price, rsi=current_rsi,
-                reason=f"RSI {current_rsi:.1f} > {self.overbought} + MACD hist={histogram:.4f} (bearish)",
-            )
-        return None
