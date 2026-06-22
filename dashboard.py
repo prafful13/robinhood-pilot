@@ -73,6 +73,21 @@ def _demo_bot_status() -> SimpleNamespace:
     )
 
 
+def _demo_symbol_snapshots() -> pd.DataFrame:
+    symbols  = ["GOOGL", "AAPL", "NVDA", "AVGO", "CRWV", "XLE"]
+    prices   = [348.1, 298.7, 209.1, 396.9, 111.9, 53.8]
+    rsis     = [45.2, 38.7, 62.1, 29.4, 71.8, 55.3]
+    signals  = [None, None, None, "buy", "sell", None]
+    mac_hist = [0.12, -0.05, 0.33, 0.08, -0.21, 0.02]
+    bb_pct_b = [52.1, 38.4, 68.9, 18.3, 94.2, 50.1]
+    now = datetime.now().replace(tzinfo=None) - timedelta(minutes=4)
+    return pd.DataFrame([
+        {"symbol": s, "recorded_at": now, "rsi": r, "price": p,
+         "signal": sig, "macd_hist": m, "bb_pct_b": b}
+        for s, r, p, sig, m, b in zip(symbols, rsis, prices, signals, mac_hist, bb_pct_b)
+    ])
+
+
 def _demo_bot_control() -> SimpleNamespace:
     return SimpleNamespace(paused=False, paused_at=None)
 
@@ -243,6 +258,30 @@ def load_tax_summary(short_rate: float, long_rate: float):
                   long_term_gain=lt_gain, long_term_tax=0.0,
                   total_tax=round(st_gain*short_rate, 2), by_symbol=by_sym)
     return compute_tax(short_rate, long_rate)
+
+
+@st.cache_data(ttl=REFRESH_SECS)
+def load_symbol_snapshots() -> pd.DataFrame:
+    if DEMO_MODE:
+        return _demo_symbol_snapshots()
+    from db.models import SymbolSnapshot
+    with SessionLocal() as db:
+        rows = (
+            db.query(SymbolSnapshot)
+            .order_by(SymbolSnapshot.recorded_at.desc())
+            .limit(200)
+            .all()
+        )
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame([{
+        "symbol": r.symbol, "recorded_at": r.recorded_at,
+        "rsi": r.rsi, "price": r.price, "signal": r.signal,
+        "macd_hist": getattr(r, "macd_hist", None),
+        "bb_pct_b": getattr(r, "bb_pct_b", None),
+    } for r in rows])
+    # Keep only the most recent snapshot per symbol
+    return df.sort_values("recorded_at", ascending=False).drop_duplicates("symbol").reset_index(drop=True)
 
 
 def load_runtime_config() -> SimpleNamespace | None:
@@ -421,7 +460,7 @@ long_rate  = long_pct  / 100
 st.sidebar.divider()
 with st.sidebar.expander("Strategy Reference"):
     st.markdown("""
-All strategies run on 15-min bars, 7-day lookback, Mon–Fri 9:30–16:00 ET.
+All strategies run on 10-min bars, 7-day lookback, Mon–Fri 9:30–16:00 ET.
 Parameters above are live — bot picks them up on the next cycle.
 
 **RSI Mean-Reversion**
@@ -510,6 +549,173 @@ if status and status.token_expires_at:
         st.error(f"⚠ OAuth token expired or expiring soon ({days_left:.1f} days). Run: `uv run inv auth && uv run inv k8s-seal && kubectl apply -f k8s/sealed/ && uv run inv k8s-restart`")
     elif days_left < 3:
         st.warning(f"OAuth token expires in {days_left:.1f} days. Consider re-authenticating soon.")
+
+st.divider()
+
+# ── Watchlist RSI Monitor ──────────────────────────────────────────────────
+
+st.subheader("Watchlist RSI Monitor")
+
+snap_df = load_symbol_snapshots()
+_oversold  = rc.oversold   if rc else cfg["strategy"].get("oversold", 30)
+_overbought = rc.overbought if rc else cfg["strategy"].get("overbought", 70)
+
+if snap_df.empty:
+    st.info("No RSI data yet — will populate after the first market-hours cycle.")
+else:
+    snap_df = snap_df.sort_values("rsi", ascending=True).reset_index(drop=True)
+
+    bar_colors = []
+    for _, row in snap_df.iterrows():
+        if row["rsi"] is None:
+            bar_colors.append("#888888")
+        elif row["rsi"] <= _oversold:
+            bar_colors.append("#00C805")
+        elif row["rsi"] >= _overbought:
+            bar_colors.append("#FF5000")
+        else:
+            bar_colors.append("#636EFA")
+
+    # Build hover + bar labels
+    labels = []
+    for _, row in snap_df.iterrows():
+        rsi_str = f"{row['rsi']:.1f}" if row["rsi"] is not None else "n/a"
+        price_str = f"${row['price']:.2f}" if row["price"] else ""
+        sig_str = f" ● {row['signal'].upper()}" if isinstance(row["signal"], str) else ""
+        labels.append(f"RSI {rsi_str}{sig_str}  {price_str}")
+
+    fig_rsi = go.Figure()
+    fig_rsi.add_trace(go.Bar(
+        x=snap_df["rsi"].fillna(0),
+        y=snap_df["symbol"],
+        orientation="h",
+        marker_color=bar_colors,
+        text=labels,
+        textposition="outside",
+        cliponaxis=False,
+        hovertemplate="<b>%{y}</b><br>RSI: %{x:.1f}<extra></extra>",
+    ))
+
+    # Buy / sell threshold bands and lines
+    fig_rsi.add_vrect(x0=0, x1=_oversold,   fillcolor="#00C805", opacity=0.07, line_width=0)
+    fig_rsi.add_vrect(x0=_overbought, x1=100, fillcolor="#FF5000", opacity=0.07, line_width=0)
+    fig_rsi.add_vline(
+        x=_oversold, line_dash="dash", line_color="#00C805", line_width=1.5,
+        annotation_text=f"Buy < {_oversold}", annotation_position="top left",
+        annotation_font_color="#00C805",
+    )
+    fig_rsi.add_vline(
+        x=_overbought, line_dash="dash", line_color="#FF5000", line_width=1.5,
+        annotation_text=f"Sell > {_overbought}", annotation_position="top right",
+        annotation_font_color="#FF5000",
+    )
+
+    # Midline for reference
+    fig_rsi.add_vline(x=50, line_dash="dot", line_color="#555555", line_width=1, opacity=0.4)
+
+    snap_age = snap_df["recorded_at"].max()
+    age_str = ""
+    if snap_age is not None:
+        age_secs = (datetime.now() - pd.Timestamp(snap_age)).total_seconds()
+        age_str = f" · data {int(age_secs/60)}m old" if age_secs < 3600 else ""
+
+    fig_rsi.update_layout(
+        title=f"RSI(14) per Symbol{age_str}",
+        xaxis=dict(range=[0, 108], title="RSI", tickvals=[0, 20, 30, 40, 50, 60, 70, 80, 100]),
+        yaxis_title="",
+        height=280,
+        margin=dict(l=0, r=120, t=40, b=30),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+    st.plotly_chart(fig_rsi, use_container_width=True)
+
+    # Signal call-outs — reason text is strategy-aware
+    active_strategy = rc.strategy if rc else "rsi_mean_reversion"
+    buys  = snap_df[snap_df["signal"] == "buy"]["symbol"].tolist()
+    sells = snap_df[snap_df["signal"] == "sell"]["symbol"].tolist()
+    _strategy_label = {
+        "rsi_mean_reversion": f"RSI in oversold zone (< {_oversold})",
+        "macd_crossover":     "MACD histogram bullish crossover",
+        "bollinger_bands":    "price below lower Bollinger band",
+        "rsi_macd_combo":     f"RSI < {_oversold} + MACD bullish confirmation",
+    }.get(active_strategy, "signal triggered")
+    _sell_label = {
+        "rsi_mean_reversion": f"RSI in overbought zone (> {_overbought})",
+        "macd_crossover":     "MACD histogram bearish crossover",
+        "bollinger_bands":    "price above upper Bollinger band",
+        "rsi_macd_combo":     f"RSI > {_overbought} + MACD bearish confirmation",
+    }.get(active_strategy, "signal triggered")
+    if buys:
+        st.success(f"**Buy signal:** {', '.join(buys)} — {_strategy_label}")
+    if sells:
+        st.error(f"**Sell signal:** {', '.join(sells)} — {_sell_label}")
+    if not buys and not sells:
+        st.caption("No signals this cycle.")
+
+    # ── Strategy-specific second chart ────────────────────────────────────
+    if active_strategy in ("macd_crossover", "rsi_macd_combo") and "macd_hist" in snap_df.columns:
+        macd_df = snap_df.dropna(subset=["macd_hist"]).sort_values("macd_hist").reset_index(drop=True)
+        if not macd_df.empty:
+            macd_colors = ["#00C805" if v >= 0 else "#FF5000" for v in macd_df["macd_hist"]]
+            macd_labels = [
+                f"{'+' if v >= 0 else ''}{v:.4f}  {'▲ bullish' if v >= 0 else '▼ bearish'}"
+                for v in macd_df["macd_hist"]
+            ]
+            fig_macd = go.Figure()
+            fig_macd.add_trace(go.Bar(
+                x=macd_df["macd_hist"], y=macd_df["symbol"],
+                orientation="h", marker_color=macd_colors,
+                text=macd_labels, textposition="outside", cliponaxis=False,
+                hovertemplate="<b>%{y}</b><br>MACD hist: %{x:.4f}<extra></extra>",
+            ))
+            fig_macd.add_vline(x=0, line_color="#888888", line_width=1.5)
+            max_abs = macd_df["macd_hist"].abs().max() * 1.5 or 0.5
+            fig_macd.update_layout(
+                title="MACD Histogram (positive = bullish momentum)",
+                xaxis=dict(range=[-max_abs, max_abs], title="Histogram value"),
+                yaxis_title="",
+                height=260,
+                margin=dict(l=0, r=140, t=40, b=30),
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(fig_macd, use_container_width=True)
+
+    elif active_strategy == "bollinger_bands" and "bb_pct_b" in snap_df.columns:
+        bb_df = snap_df.dropna(subset=["bb_pct_b"]).sort_values("bb_pct_b").reset_index(drop=True)
+        if not bb_df.empty:
+            bb_colors = [
+                "#00C805" if v <= 0 else ("#FF5000" if v >= 100 else "#636EFA")
+                for v in bb_df["bb_pct_b"]
+            ]
+            bb_labels = [f"{v:.1f}%" for v in bb_df["bb_pct_b"]]
+            fig_bb = go.Figure()
+            fig_bb.add_trace(go.Bar(
+                x=bb_df["bb_pct_b"], y=bb_df["symbol"],
+                orientation="h", marker_color=bb_colors,
+                text=bb_labels, textposition="outside", cliponaxis=False,
+                hovertemplate="<b>%{y}</b><br>%%B: %{x:.1f}%%<extra></extra>",
+            ))
+            fig_bb.add_vrect(x0=-30, x1=0,   fillcolor="#00C805", opacity=0.07, line_width=0)
+            fig_bb.add_vrect(x0=100, x1=130, fillcolor="#FF5000", opacity=0.07, line_width=0)
+            fig_bb.add_vline(x=0,   line_dash="dash", line_color="#00C805", line_width=1.5,
+                             annotation_text="Buy (below lower band)",
+                             annotation_position="top left", annotation_font_color="#00C805")
+            fig_bb.add_vline(x=50,  line_dash="dot", line_color="#555555", line_width=1, opacity=0.4)
+            fig_bb.add_vline(x=100, line_dash="dash", line_color="#FF5000", line_width=1.5,
+                             annotation_text="Sell (above upper band)",
+                             annotation_position="top right", annotation_font_color="#FF5000")
+            fig_bb.update_layout(
+                title="Bollinger Bands %B  (0% = lower band · 50% = middle · 100% = upper band)",
+                xaxis=dict(range=[-30, 130], title="%B", tickvals=[0, 25, 50, 75, 100]),
+                yaxis_title="",
+                height=260,
+                margin=dict(l=0, r=80, t=40, b=30),
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(fig_bb, use_container_width=True)
 
 st.divider()
 
