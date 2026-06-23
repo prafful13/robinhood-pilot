@@ -88,6 +88,22 @@ def _demo_symbol_snapshots() -> pd.DataFrame:
     ])
 
 
+def _demo_desired_positions() -> pd.DataFrame:
+    now = datetime.now().replace(tzinfo=None)
+    return pd.DataFrame([
+        {"id": 1, "symbol": "NVDA", "side": "buy", "status": "pending",
+         "retry_count": 2, "target_usd": 300.0, "signal_rsi": 27.4, "signal_price": 202.95,
+         "created_at": now - timedelta(minutes=30),
+         "last_attempted_at": now - timedelta(minutes=15),
+         "error_msg": "order failed after in-cycle retries"},
+        {"id": 2, "symbol": "AVGO", "side": "buy", "status": "failed",
+         "retry_count": 5, "target_usd": 300.0, "signal_rsi": 26.1, "signal_price": 382.35,
+         "created_at": now - timedelta(hours=2),
+         "last_attempted_at": now - timedelta(minutes=30),
+         "error_msg": "exceeded 5 cycle retries"},
+    ])
+
+
 def _demo_bot_control() -> SimpleNamespace:
     return SimpleNamespace(paused=False, paused_at=None)
 
@@ -282,6 +298,37 @@ def load_symbol_snapshots() -> pd.DataFrame:
     } for r in rows])
     # Keep only the most recent snapshot per symbol
     return df.sort_values("recorded_at", ascending=False).drop_duplicates("symbol").reset_index(drop=True)
+
+
+def load_desired_positions() -> pd.DataFrame:
+    if DEMO_MODE:
+        return _demo_desired_positions()
+    from db.models import DesiredPosition
+    with SessionLocal() as db:
+        rows = (
+            db.query(DesiredPosition)
+            .filter(DesiredPosition.status.in_(["pending", "failed"]))
+            .order_by(DesiredPosition.created_at.desc())
+            .all()
+        )
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame([{
+        "id": r.id, "symbol": r.symbol, "side": r.side, "status": r.status,
+        "retry_count": r.retry_count, "target_usd": r.target_usd,
+        "signal_rsi": r.signal_rsi, "signal_price": r.signal_price,
+        "created_at": r.created_at, "last_attempted_at": r.last_attempted_at,
+        "error_msg": r.error_msg,
+    } for r in rows])
+
+
+def _clear_desired_positions(ids: list[int]) -> None:
+    if DEMO_MODE:
+        return
+    from db.models import DesiredPosition
+    with SessionLocal() as db:
+        db.query(DesiredPosition).filter(DesiredPosition.id.in_(ids)).delete(synchronize_session=False)
+        db.commit()
 
 
 def load_runtime_config() -> SimpleNamespace | None:
@@ -483,74 +530,58 @@ st.sidebar.caption(f"Auto-refreshes every {REFRESH_SECS}s")
 st.title("📈 Prafful's Sick of Trading")
 st.caption(f"Last updated: {datetime.now(_LOCAL_TZ).strftime(f'%b %d %Y  %H:%M:%S {_TZ_ABBR}')}")
 
-# ── Bot Status + Token Validity ────────────────────────────────────────────
+# ── Trade Reconciliation ───────────────────────────────────────────────────
 
-ctrl = load_bot_control()
-hdr_col, btn_col = st.columns([5, 1])
-hdr_col.subheader("Bot Status")
-with btn_col:
-    if ctrl.paused:
-        if st.button("▶ Resume", type="primary", use_container_width=True):
-            _set_paused(False)
+_desired_df = load_desired_positions()
+if not _desired_df.empty:
+    _n_pending = (_desired_df["status"] == "pending").sum()
+    _n_failed  = (_desired_df["status"] == "failed").sum()
+
+    _recon_hdr, _recon_clear = st.columns([5, 1])
+    _recon_hdr.subheader("Trade Reconciliation")
+    with _recon_clear:
+        if st.button("Clear failed", type="secondary", use_container_width=True):
+            _ids = _desired_df[_desired_df["status"] == "failed"]["id"].tolist()
+            _clear_desired_positions(_ids)
             st.cache_data.clear()
             st.rerun()
-    else:
-        if st.button("⏹ Pause", type="secondary", use_container_width=True):
-            _set_paused(True)
-            st.cache_data.clear()
-            st.rerun()
 
-if ctrl.paused:
-    paused_str = f" since {_to_local(ctrl.paused_at).strftime(f'%b %d %H:%M {_TZ_ABBR}')}" if ctrl.paused_at else ""
-    st.warning(f"Trading is **PAUSED**{paused_str}. The bot is running but will not place any orders. Click **Resume** to re-enable.")
+    if _n_failed:
+        st.error(f"{_n_failed} desired position(s) failed — manual action may be needed.")
+    if _n_pending:
+        st.info(f"{_n_pending} position(s) pending — bot is reconciling on each cycle.")
 
-status = load_bot_status()
-# Age comparisons: DB timestamps are ET-naive, so compare against ET now
-now_et = datetime.now(ET).replace(tzinfo=None)
+    _disp = _desired_df.copy()
+    _disp["Desired"] = _disp.apply(
+        lambda r: f"BUY ${r['target_usd']:.0f}" if r["side"] == "buy" else "SELL",
+        axis=1,
+    )
+    _disp["Signal RSI"] = _disp["signal_rsi"].apply(
+        lambda v: f"{v:.1f}" if pd.notna(v) else "—"
+    )
+    _disp["Signal Price"] = _disp["signal_price"].apply(
+        lambda v: f"${v:.2f}" if pd.notna(v) else "—"
+    )
+    _disp["Attempts"] = _disp["retry_count"].apply(lambda v: f"{v} / 5")
+    _disp["Last Error"] = _disp["error_msg"].fillna("—")
+    _disp["Since"] = _disp["created_at"].apply(
+        lambda v: _to_local(v).strftime(f"%b %d %H:%M {_TZ_ABBR}") if v is not None else "—"
+    )
+    _disp["Last Try"] = _disp["last_attempted_at"].apply(
+        lambda v: _to_local(v).strftime(f"%H:%M {_TZ_ABBR}") if v is not None else "—"
+    )
 
-s1, s2, s3, s4 = st.columns(4)
+    _status_icon = {"pending": "⏳ pending", "failed": "❌ failed"}
+    _disp["Status"] = _disp["status"].map(_status_icon).fillna(_disp["status"])
 
-if status and status.last_cycle_at:
-    age_mins = (now_et - status.last_cycle_at).total_seconds() / 60
-    cycle_label = f"{age_mins:.0f}m ago" if age_mins < 60 else f"{age_mins/60:.1f}h ago"
-    cycle_ok = age_mins < 20
-    s1.metric("Last Cycle", cycle_label, delta="live" if cycle_ok else "stale", delta_color="normal" if cycle_ok else "inverse")
-else:
-    s1.metric("Last Cycle", "No data", delta="bot not running?", delta_color="inverse")
-
-if status and status.token_expires_at:
-    time_left = status.token_expires_at - now_et
-    days_left = time_left.total_seconds() / 86400
-    if days_left > 1:
-        token_label = f"{days_left:.1f}d"
-    elif days_left > 0:
-        token_label = f"{time_left.total_seconds()/3600:.1f}h"
-    else:
-        token_label = "EXPIRED"
-    token_ok = days_left > 1
-    s2.metric("Token Expires In", token_label,
-              delta="valid" if token_ok else "needs refresh",
-              delta_color="normal" if token_ok else "inverse")
-    if status.token_saved_at:
-        issued_local = _to_local(status.token_saved_at)
-        s3.metric("Token Issued", issued_local.strftime(f"%b %d %H:%M {_TZ_ABBR}"))
-else:
-    s2.metric("Token Expires In", "Unknown")
-    s3.metric("Token Issued", "Unknown")
-
-if status and status.last_error:
-    s4.metric("Last Error", "⚠ Error", delta=status.last_error[:40], delta_color="inverse")
-else:
-    s4.metric("Last Error", "None", delta="healthy", delta_color="normal")
-
-if status and status.token_expires_at:
-    days_left = (status.token_expires_at - now_et).total_seconds() / 86400
-    if days_left < 1:
-        st.error(f"⚠ OAuth token expired or expiring soon ({days_left:.1f} days). Run: `uv run inv auth && uv run inv k8s-seal && kubectl apply -f k8s/sealed/ && uv run inv k8s-restart`")
-    elif days_left < 3:
-        st.warning(f"OAuth token expires in {days_left:.1f} days. Consider re-authenticating soon.")
-
-st.divider()
+    st.dataframe(
+        _disp[["symbol", "Desired", "Status", "Attempts", "Signal RSI", "Signal Price", "Since", "Last Try", "Last Error"]].rename(
+            columns={"symbol": "Symbol"}
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+    st.divider()
 
 # ── Watchlist RSI Monitor ──────────────────────────────────────────────────
 
@@ -717,6 +748,111 @@ else:
             )
             st.plotly_chart(fig_bb, use_container_width=True)
 
+    # ── Signal Insights ──────────────────────────────────────────────────────
+    st.markdown("**Signal Insights**")
+
+    _insight_cards = []
+    for _, _r in snap_df.iterrows():
+        _sym = _r["symbol"]
+        _rsi_v = float(_r["rsi"]) if pd.notna(_r.get("rsi")) else None
+        _macd_v = (float(_r["macd_hist"]) if "macd_hist" in snap_df.columns and pd.notna(_r.get("macd_hist")) else None)
+        _bb_v   = (float(_r["bb_pct_b"])  if "bb_pct_b"  in snap_df.columns and pd.notna(_r.get("bb_pct_b"))  else None)
+
+        if _rsi_v is None:
+            continue
+
+        if _rsi_v <= _oversold - 5:
+            _rsi_txt = f"RSI {_rsi_v:.1f} — deeply oversold"
+        elif _rsi_v <= _oversold:
+            _rsi_txt = f"RSI {_rsi_v:.1f} — oversold"
+        elif _rsi_v >= _overbought + 5:
+            _rsi_txt = f"RSI {_rsi_v:.1f} — deeply overbought"
+        elif _rsi_v >= _overbought:
+            _rsi_txt = f"RSI {_rsi_v:.1f} — overbought"
+        else:
+            _rsi_txt = f"RSI {_rsi_v:.1f}"
+
+        if active_strategy in ("macd_crossover", "rsi_macd_combo") and _macd_v is not None:
+            _md_dir = "bullish" if _macd_v > 0 else "bearish"
+            _macd_lbl = f"MACD {_macd_v:+.4f} ({_md_dir})"
+            if _rsi_v <= _oversold and _macd_v > 0:
+                _note = "RSI and MACD agree — **buy signal active**."
+                _ctype = "buy"
+            elif _rsi_v <= _oversold and _macd_v < 0:
+                _note = f"Oversold but MACD still bearish — needs +{abs(_macd_v):.4f} to flip positive."
+                _ctype = "conflict"
+            elif _rsi_v >= _overbought and _macd_v < 0:
+                _note = "RSI and MACD agree — **sell signal active**."
+                _ctype = "sell"
+            elif _rsi_v >= _overbought and _macd_v > 0:
+                _note = f"Overbought but MACD still bullish — needs −{abs(_macd_v):.4f} to flip negative."
+                _ctype = "conflict"
+            else:
+                _note = f"No signal. {_md_dir.capitalize()} MACD momentum, RSI neutral."
+                _ctype = "neutral"
+            _body = f"**{_sym}** · {_rsi_txt} · {_macd_lbl}\n\n{_note}"
+
+        elif active_strategy == "bollinger_bands" and _bb_v is not None:
+            if _bb_v < 0:
+                _note = "Price below lower Bollinger band — **buy signal active**."
+                _ctype = "buy"
+            elif _bb_v <= 20:
+                _note = f"Near lower band (%B {_bb_v:.0f}%) — potential buy approaching."
+                _ctype = "watch"
+            elif _bb_v > 100:
+                _note = "Price above upper Bollinger band — **sell signal active**."
+                _ctype = "sell"
+            elif _bb_v >= 80:
+                _note = f"Near upper band (%B {_bb_v:.0f}%) — potential sell approaching."
+                _ctype = "watch"
+            else:
+                _note = f"Within bands. No signal."
+                _ctype = "neutral"
+            _body = f"**{_sym}** · {_rsi_txt} · %B {_bb_v:.0f}%\n\n{_note}"
+
+        else:
+            if _rsi_v <= _oversold:
+                _note = f"RSI below {_oversold} — **buy signal active**."
+                _ctype = "buy"
+            elif _rsi_v >= _overbought:
+                _note = f"RSI above {_overbought} — **sell signal active**."
+                _ctype = "sell"
+            else:
+                _note = "No signal. RSI neutral."
+                _ctype = "neutral"
+            _body = f"**{_sym}** · {_rsi_txt}\n\n{_note}"
+
+        _insight_cards.append({"sym": _sym, "type": _ctype, "body": _body,
+                                "rsi": _rsi_v, "macd": _macd_v, "bb": _bb_v})
+
+    if _insight_cards:
+        _ic = st.columns(3)
+        for _i, _card in enumerate(_insight_cards):
+            with _ic[_i % 3]:
+                if _card["type"] == "buy":
+                    st.success(_card["body"])
+                elif _card["type"] == "sell":
+                    st.error(_card["body"])
+                elif _card["type"] in ("conflict", "watch"):
+                    st.warning(_card["body"])
+                else:
+                    st.info(_card["body"])
+
+        # For MACD strategies: show which oversold stock is closest to a buy flip
+        if active_strategy in ("macd_crossover", "rsi_macd_combo"):
+            _flip_cands = [
+                c for c in _insight_cards
+                if c["rsi"] is not None and c["rsi"] <= _oversold
+                and c["macd"] is not None and c["macd"] < 0
+            ]
+            if _flip_cands:
+                _nearest = min(_flip_cands, key=lambda c: abs(c["macd"]))
+                st.caption(
+                    f"Closest to buy flip: **{_nearest['sym']}** "
+                    f"(MACD {_nearest['macd']:+.4f} — smallest histogram distance to zero "
+                    f"among oversold stocks)."
+                )
+
 st.divider()
 
 # ── Portfolio Value & P&L ──────────────────────────────────────────────────
@@ -878,6 +1014,74 @@ else:
         }),
         use_container_width=True, hide_index=True,
     )
+
+st.divider()
+
+# ── Bot Status + Token Validity ────────────────────────────────────────────
+
+ctrl = load_bot_control()
+hdr_col, btn_col = st.columns([5, 1])
+hdr_col.subheader("Bot Status")
+with btn_col:
+    if ctrl.paused:
+        if st.button("▶ Resume", type="primary", use_container_width=True):
+            _set_paused(False)
+            st.cache_data.clear()
+            st.rerun()
+    else:
+        if st.button("⏹ Pause", type="secondary", use_container_width=True):
+            _set_paused(True)
+            st.cache_data.clear()
+            st.rerun()
+
+if ctrl.paused:
+    paused_str = f" since {_to_local(ctrl.paused_at).strftime(f'%b %d %H:%M {_TZ_ABBR}')}" if ctrl.paused_at else ""
+    st.warning(f"Trading is **PAUSED**{paused_str}. The bot is running but will not place any orders. Click **Resume** to re-enable.")
+
+status = load_bot_status()
+now_et = datetime.now(ET).replace(tzinfo=None)
+
+s1, s2, s3, s4 = st.columns(4)
+
+if status and status.last_cycle_at:
+    age_mins = (now_et - status.last_cycle_at).total_seconds() / 60
+    cycle_label = f"{age_mins:.0f}m ago" if age_mins < 60 else f"{age_mins/60:.1f}h ago"
+    cycle_ok = age_mins < 20
+    s1.metric("Last Cycle", cycle_label, delta="live" if cycle_ok else "stale", delta_color="normal" if cycle_ok else "inverse")
+else:
+    s1.metric("Last Cycle", "No data", delta="bot not running?", delta_color="inverse")
+
+if status and status.token_expires_at:
+    time_left = status.token_expires_at - now_et
+    days_left = time_left.total_seconds() / 86400
+    if days_left > 1:
+        token_label = f"{days_left:.1f}d"
+    elif days_left > 0:
+        token_label = f"{time_left.total_seconds()/3600:.1f}h"
+    else:
+        token_label = "EXPIRED"
+    token_ok = days_left > 1
+    s2.metric("Token Expires In", token_label,
+              delta="valid" if token_ok else "needs refresh",
+              delta_color="normal" if token_ok else "inverse")
+    if status.token_saved_at:
+        issued_local = _to_local(status.token_saved_at)
+        s3.metric("Token Issued", issued_local.strftime(f"%b %d %H:%M {_TZ_ABBR}"))
+else:
+    s2.metric("Token Expires In", "Unknown")
+    s3.metric("Token Issued", "Unknown")
+
+if status and status.last_error:
+    s4.metric("Last Error", "⚠ Error", delta=status.last_error[:40], delta_color="inverse")
+else:
+    s4.metric("Last Error", "None", delta="healthy", delta_color="normal")
+
+if status and status.token_expires_at:
+    days_left = (status.token_expires_at - now_et).total_seconds() / 86400
+    if days_left < 1:
+        st.error(f"⚠ OAuth token expired or expiring soon ({days_left:.1f} days). Run: `uv run inv auth && uv run inv k8s-seal && kubectl apply -f k8s/sealed/ && uv run inv k8s-restart`")
+    elif days_left < 3:
+        st.warning(f"OAuth token expires in {days_left:.1f} days. Consider re-authenticating soon.")
 
 # ── Auto-refresh ───────────────────────────────────────────────────────────
 
