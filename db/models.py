@@ -95,3 +95,21 @@ class SymbolSnapshot(Base):
     signal: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)  # 'buy', 'sell', or None
     macd_hist: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     bb_pct_b: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0=lower band, 50=mid, 100=upper
+
+
+class DesiredPosition(Base):
+    """Desired portfolio state set by strategy signals; reconciled each cycle until achieved or failed."""
+    __tablename__ = "desired_positions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False)
+    side: Mapped[str] = mapped_column(String(4), nullable=False)      # 'buy' | 'sell'
+    target_usd: Mapped[Optional[float]] = mapped_column(Float, nullable=True)   # buy amount
+    signal_rsi: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    signal_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    last_attempted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # status: 'pending' | 'achieved' | 'failed' | 'superseded'
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    error_msg: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)

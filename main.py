@@ -20,7 +20,7 @@ import yaml
 
 from broker.robinhood import RobinhoodClient
 from db.database import SessionLocal, init_db, init_runtime_config
-from db.models import BotControl, BotStatus, PortfolioSnapshot, RuntimeConfig, SymbolSnapshot, Trade
+from db.models import BotControl, BotStatus, DesiredPosition, PortfolioSnapshot, RuntimeConfig, SymbolSnapshot, Trade
 from risk.manager import RiskManager
 from strategy.base import Strategy
 from strategy.bollinger import BollingerBands
@@ -109,7 +109,209 @@ def record_trade(
         db.commit()
 
 
-async def run_cycle(broker: RobinhoodClient, strategy: RSIMeanReversion, risk: RiskManager, account: str, token_data: dict | None = None):
+_ORDER_MAX_RETRIES = 4
+_ORDER_BACKOFF_BASE = 5   # doubles each attempt: 5 → 10 → 20 → 40 s
+_MAX_CYCLE_RETRIES = 5    # give up after N full 15-min cycle attempts
+
+
+async def _place_order_with_retry(place_fn, *args) -> dict:
+    """Exponential backoff retry within a single cycle. Returns {} on total failure."""
+    for attempt in range(1, _ORDER_MAX_RETRIES + 1):
+        result = await place_fn(*args)
+        if result and "data" in result:
+            return result
+        if attempt < _ORDER_MAX_RETRIES:
+            delay = _ORDER_BACKOFF_BASE * (2 ** (attempt - 1))
+            log.warning("  order attempt %d/%d returned no data — retrying in %ds",
+                        attempt, _ORDER_MAX_RETRIES, delay)
+            await asyncio.sleep(delay)
+    return {}
+
+
+def _sync_desired_state(
+    signals: list, positions: list[dict], max_trade_usd: float, now: datetime
+) -> None:
+    """Convert fresh strategy signals into desired-position entries.
+
+    Rules:
+    - Signal for already-held buy / already-gone sell → skip (already achieved)
+    - No existing entry for symbol → insert as pending
+    - Existing pending/failed same direction → skip (already tracking; reset if failed)
+    - Existing pending/failed opposing direction → supersede old, insert new
+    """
+    held = {p["symbol"] for p in positions if float(p.get("quantity", 0)) > 0}
+
+    with SessionLocal() as db:
+        for sig in signals:
+            already_achieved = (
+                (sig.side == "buy" and sig.symbol in held)
+                or (sig.side == "sell" and sig.symbol not in held)
+            )
+            if already_achieved:
+                continue
+
+            existing = (
+                db.query(DesiredPosition)
+                .filter(
+                    DesiredPosition.symbol == sig.symbol,
+                    DesiredPosition.status.in_(["pending", "failed"]),
+                )
+                .order_by(DesiredPosition.created_at.desc())
+                .first()
+            )
+
+            if existing:
+                if existing.side == sig.side:
+                    if existing.status == "failed":
+                        # Signal re-fired — reset and try again
+                        existing.status = "pending"
+                        existing.retry_count = 0
+                        existing.error_msg = None
+                        existing.signal_rsi = sig.rsi
+                        existing.signal_price = sig.price
+                        existing.created_at = now
+                        log.info(f"  desired {sig.side.upper()} {sig.symbol} reset (signal re-fired)")
+                    # else: same direction already pending, nothing to do
+                    continue
+                else:
+                    # Opposing signal — supersede old entry
+                    existing.status = "superseded"
+                    log.info(f"  desired {existing.side.upper()} {sig.symbol} superseded by {sig.side.upper()} signal")
+
+            db.add(DesiredPosition(
+                symbol=sig.symbol,
+                side=sig.side,
+                target_usd=max_trade_usd if sig.side == "buy" else None,
+                signal_rsi=sig.rsi,
+                signal_price=sig.price,
+                created_at=now,
+                status="pending",
+            ))
+            log.info(f"  desired state: {sig.side.upper()} {sig.symbol}  RSI={sig.rsi:.1f}")
+        db.commit()
+
+
+def _update_desired(d_id: int, **kwargs) -> None:
+    with SessionLocal() as db:
+        d = db.get(DesiredPosition, d_id)
+        if d is None:
+            return
+        for k, v in kwargs.items():
+            setattr(d, k, v)
+        db.commit()
+
+
+async def _reconcile(
+    broker: RobinhoodClient,
+    risk: RiskManager,
+    account: str,
+    positions: list[dict],
+    now: datetime,
+) -> None:
+    """Try to close the gap between desired positions and actual portfolio."""
+    held = {p["symbol"]: p for p in positions if float(p.get("quantity", 0)) > 0}
+
+    with SessionLocal() as db:
+        rows = db.query(DesiredPosition).filter(DesiredPosition.status == "pending").all()
+        pending = [
+            (d.id, d.symbol, d.side, d.target_usd, d.signal_rsi, d.signal_price, d.retry_count)
+            for d in rows
+        ]
+
+    if not pending:
+        return
+
+    log.info(f"  reconciling {len(pending)} desired position(s)")
+
+    for d_id, symbol, side, target_usd, signal_rsi, signal_price, retry_count in pending:
+        # Already in desired state?
+        if side == "buy" and symbol in held:
+            _update_desired(d_id, status="achieved", last_attempted_at=now)
+            log.info(f"  ✓ {symbol} already held — marking achieved")
+            continue
+        if side == "sell" and symbol not in held:
+            _update_desired(d_id, status="achieved", last_attempted_at=now)
+            log.info(f"  ✓ {symbol} already clear — marking achieved")
+            continue
+
+        # Cycle retry limit
+        if retry_count >= _MAX_CYCLE_RETRIES:
+            _update_desired(d_id, status="failed", last_attempted_at=now,
+                            error_msg=f"exceeded {_MAX_CYCLE_RETRIES} cycle retries")
+            log.error(f"  ✗ desired {side.upper()} {symbol} FAILED — max cycle retries reached")
+            continue
+
+        log.info(f"  attempting {side.upper()} {symbol}  (cycle {retry_count + 1}/{_MAX_CYCLE_RETRIES})")
+
+        if side == "buy":
+            ok, reason = risk.can_buy(symbol, positions)
+            if not ok:
+                _update_desired(d_id, retry_count=retry_count + 1,
+                                last_attempted_at=now, error_msg=reason)
+                log.info(f"  → risk blocked: {reason}")
+                continue
+
+            dollar_str = f"{(target_usd or risk.max_trade_usd):.2f}"
+            await broker.review_order(account, symbol, "buy", dollar_str)
+            result = await _place_order_with_retry(broker.place_buy_order, account, symbol, dollar_str)
+
+            if not result:
+                msg = "order failed after in-cycle retries"
+                _update_desired(d_id, retry_count=retry_count + 1,
+                                last_attempted_at=now, error_msg=msg)
+                log.error(f"  ✗ BUY {symbol} — {msg} (will retry next cycle)")
+            else:
+                order_id = result.get("data", {}).get("order", {}).get("id")
+                amt = target_usd or risk.max_trade_usd
+                price = signal_price or 0.0
+                record_trade(
+                    symbol=symbol, side="buy",
+                    quantity=amt / price if price else 0,
+                    price=price, dollar_amount=amt,
+                    order_id=order_id, rsi=signal_rsi,
+                )
+                _update_desired(d_id, status="achieved",
+                                last_attempted_at=now, error_msg=None)
+                log.info(f"  ✓ BUY {symbol} achieved  order={order_id}")
+
+        elif side == "sell":
+            ok, reason = risk.can_sell(symbol, positions)
+            if not ok:
+                _update_desired(d_id, retry_count=retry_count + 1,
+                                last_attempted_at=now, error_msg=reason)
+                log.info(f"  → risk blocked: {reason}")
+                continue
+
+            position = risk.position_for(symbol, positions)
+            qty_str = str(float(position["quantity"]))
+            avg_cost = float(position.get("average_buy_price", 0))
+
+            await broker.review_sell_order(account, symbol, qty_str)
+            result = await _place_order_with_retry(broker.place_sell_order, account, symbol, qty_str)
+
+            if not result:
+                msg = "order failed after in-cycle retries"
+                _update_desired(d_id, retry_count=retry_count + 1,
+                                last_attempted_at=now, error_msg=msg)
+                log.error(f"  ✗ SELL {symbol} — {msg} (will retry next cycle)")
+            else:
+                order_id = result.get("data", {}).get("order", {}).get("id")
+                qty = float(position["quantity"])
+                price = signal_price or 0.0
+                record_trade(
+                    symbol=symbol, side="sell",
+                    quantity=qty, price=price,
+                    dollar_amount=qty * price,
+                    order_id=order_id, rsi=signal_rsi,
+                    realized_pnl=qty * (price - avg_cost),
+                    cost_basis=avg_cost,
+                )
+                _update_desired(d_id, status="achieved",
+                                last_attempted_at=now, error_msg=None)
+                log.info(f"  ✓ SELL {symbol} achieved  order={order_id}")
+
+
+async def run_cycle(broker: RobinhoodClient, strategy: Strategy, risk: RiskManager, account: str, token_data: dict | None = None):
     log.info("── running strategy cycle ──")
     now = datetime.now(ET).replace(tzinfo=None)
 
@@ -121,68 +323,13 @@ async def run_cycle(broker: RobinhoodClient, strategy: RSIMeanReversion, risk: R
     signals = await strategy.generate_signals(broker)
     _record_symbol_snapshots(getattr(strategy, "last_metrics", {}), now)
 
-    if not signals:
-        log.info("no signals this cycle")
-        return
-
     for sig in signals:
         log.info(f"  signal: {sig.side.upper()} {sig.symbol}  RSI={sig.rsi:.1f}  price=${sig.price:.2f}")
+    if not signals:
+        log.info("  no new signals")
 
-        if sig.side == "buy":
-            ok, reason = risk.can_buy(sig.symbol, positions)
-            if not ok:
-                log.info(f"  → skipped ({reason})")
-                continue
-
-            dollar_str = f"{risk.max_trade_usd:.2f}"
-            review = await broker.review_order(account, sig.symbol, "buy", dollar_str)
-            log.info(f"  review: {review}")
-
-            result = await broker.place_buy_order(account, sig.symbol, dollar_str)
-            order_id = result.get("data", {}).get("order", {}).get("id")
-            est_qty = risk.max_trade_usd / sig.price
-
-            record_trade(
-                symbol=sig.symbol,
-                side="buy",
-                quantity=est_qty,
-                price=sig.price,
-                dollar_amount=risk.max_trade_usd,
-                order_id=order_id,
-                rsi=sig.rsi,
-            )
-            log.info(f"  ✓ BUY order placed: {sig.symbol}  ${dollar_str}  order={order_id}")
-
-        elif sig.side == "sell":
-            ok, reason = risk.can_sell(sig.symbol, positions)
-            if not ok:
-                log.info(f"  → skipped ({reason})")
-                continue
-
-            position = risk.position_for(sig.symbol, positions)
-            qty_str = str(float(position["quantity"]))
-            avg_cost = float(position.get("average_buy_price", 0))
-
-            review = await broker.review_sell_order(account, sig.symbol, qty_str)
-            log.info(f"  review: {review}")
-
-            result = await broker.place_sell_order(account, sig.symbol, qty_str)
-            order_id = result.get("data", {}).get("order", {}).get("id")
-            qty = float(position["quantity"])
-            pnl = qty * (sig.price - avg_cost)
-
-            record_trade(
-                symbol=sig.symbol,
-                side="sell",
-                quantity=qty,
-                price=sig.price,
-                dollar_amount=qty * sig.price,
-                order_id=order_id,
-                rsi=sig.rsi,
-                realized_pnl=pnl,
-                cost_basis=avg_cost,
-            )
-            log.info(f"  ✓ SELL order placed: {sig.symbol}  qty={qty_str}  PnL=${pnl:.2f}  order={order_id}")
+    _sync_desired_state(signals, positions, risk.max_trade_usd, now)
+    await _reconcile(broker, risk, account, positions, now)
 
 
 def _apply_runtime_config(cfg: dict) -> dict:
