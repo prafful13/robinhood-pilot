@@ -25,6 +25,10 @@ risk:
   max_trade_usd: 300.0
   max_positions: 5
   daily_loss_limit_usd: 50.0
+  # Order-level safety guardrails (RiskLimits)
+  max_notional_per_order: 300.0    # hard cap per single order, never > $1,000
+  max_orders_per_cycle: 3          # max orders placed in one 15-min reconcile cycle
+  max_concentration_pct: 25.0      # max % of portfolio in a single symbol per order
 
 tax:
   short_term_rate: 0.24
@@ -37,4 +41,3 @@ broker:
   redirect_uri: "http://localhost:3118/callback"
   scope: "internal"
   resource: "https://agent.robinhood.com/mcp/trading"
-

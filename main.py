@@ -7,6 +7,7 @@ Trading bot main loop.
   - Persists every trade to PostgreSQL
 """
 
+import argparse
 import asyncio
 import logging
 import os
@@ -24,6 +25,7 @@ from db.models import (
     BotControl, BotStatus, DesiredPosition, Position, PortfolioSnapshot,
     RuntimeConfig, SymbolSnapshot, Trade,
 )
+from risk.guardrails import RiskLimits
 from risk.manager import RiskManager
 from strategy.base import Strategy
 from strategy.bollinger import BollingerBands
@@ -204,15 +206,47 @@ def _update_desired(d_id: int, **kwargs) -> None:
         db.commit()
 
 
+def _is_kill_switch_active() -> bool:
+    """Return True if the kill-switch flag is set in bot_control, halting all order submission."""
+    with SessionLocal() as db:
+        ctrl = db.get(BotControl, 1)
+        return bool(ctrl and getattr(ctrl, "kill_switch", False))
+
+
 async def _reconcile(
     broker: RobinhoodClient,
     risk: RiskManager,
     account: str,
     positions: list[dict],
     now: datetime,
+    *,
+    dry_run: bool = False,
+    limits: RiskLimits | None = None,
+    portfolio_value: float = 0.0,
 ) -> None:
-    """Try to close the gap between desired positions and actual portfolio."""
+    """Try to close the gap between desired positions and actual portfolio.
+
+    Args:
+        broker: Broker client for order submission.
+        risk: RiskManager for position-level checks (P&L, position count).
+        account: Broker account identifier.
+        positions: Current live positions from the broker.
+        now: Current timestamp (ET-naive).
+        dry_run: When True, log intended orders but do not submit them.
+        limits: Order-level RiskLimits guardrails. If None, guardrails are skipped.
+        portfolio_value: Total portfolio value used for concentration checks.
+    """
+    if _is_kill_switch_active():
+        log.warning("  KILL SWITCH ACTIVE — all order submission halted")
+        return
+
+    if dry_run:
+        log.info("  DRY-RUN mode: orders will be logged but NOT submitted")
+
     held = {p["symbol"]: p for p in positions if float(p.get("quantity", 0)) > 0}
+
+    if limits is not None:
+        limits.reset_cycle()
 
     with SessionLocal() as db:
         rows = db.query(DesiredPosition).filter(DesiredPosition.status == "pending").all()
@@ -254,8 +288,42 @@ async def _reconcile(
                 log.info(f"  → risk blocked: {reason}")
                 continue
 
-            dollar_str = f"{(target_usd or risk.max_trade_usd):.2f}"
+            notional = target_usd or risk.max_trade_usd
+
+            # Order-level guardrail checks (applied before any broker call)
+            if limits is not None:
+                ok, reason = limits.check_order_count()
+                if not ok:
+                    _update_desired(d_id, retry_count=retry_count + 1,
+                                    last_attempted_at=now, error_msg=reason)
+                    log.warning(f"  → guardrail blocked: {reason}")
+                    continue
+
+                ok, reason = limits.check_notional(symbol, notional)
+                if not ok:
+                    _update_desired(d_id, retry_count=retry_count + 1,
+                                    last_attempted_at=now, error_msg=reason)
+                    log.warning(f"  → guardrail blocked: {reason}")
+                    continue
+
+                ok, reason = limits.check_concentration(symbol, notional, portfolio_value)
+                if not ok:
+                    _update_desired(d_id, retry_count=retry_count + 1,
+                                    last_attempted_at=now, error_msg=reason)
+                    log.warning(f"  → guardrail blocked: {reason}")
+                    continue
+
+            dollar_str = f"{notional:.2f}"
             await broker.review_order(account, symbol, "buy", dollar_str)
+
+            if dry_run:
+                log.info(f"  [DRY-RUN] would BUY {symbol} ${dollar_str}  RSI={signal_rsi}  price={signal_price}")
+                _update_desired(d_id, status="achieved", last_attempted_at=now,
+                                error_msg="dry-run: not submitted")
+                if limits is not None:
+                    limits.record_order_placed()
+                continue
+
             result = await _place_order_with_retry(broker.place_buy_order, account, symbol, dollar_str)
 
             if not result:
@@ -265,7 +333,7 @@ async def _reconcile(
                 log.error(f"  ✗ BUY {symbol} — {msg} (will retry next cycle)")
             else:
                 order_id = result.get("data", {}).get("order", {}).get("id")
-                amt = target_usd or risk.max_trade_usd
+                amt = notional
                 if signal_price is not None:
                     price = signal_price
                 else:
@@ -275,6 +343,8 @@ async def _reconcile(
                         log.error(f"  ✗ BUY {symbol}: signal_price is None and live quote unavailable — trade not recorded")
                         _update_desired(d_id, status="achieved", last_attempted_at=now, error_msg=None)
                         log.info(f"  ✓ BUY {symbol} achieved  order={order_id}")
+                        if limits is not None:
+                            limits.record_order_placed()
                         continue
                 record_trade(
                     symbol=symbol, side="buy",
@@ -285,6 +355,8 @@ async def _reconcile(
                 _update_desired(d_id, status="achieved",
                                 last_attempted_at=now, error_msg=None)
                 log.info(f"  ✓ BUY {symbol} achieved  order={order_id}")
+                if limits is not None:
+                    limits.record_order_placed()
 
         elif side == "sell":
             ok, reason = risk.can_sell(symbol, positions)
@@ -294,11 +366,29 @@ async def _reconcile(
                 log.info(f"  → risk blocked: {reason}")
                 continue
 
+            # Order count guardrail applies to sells too
+            if limits is not None:
+                ok, reason = limits.check_order_count()
+                if not ok:
+                    _update_desired(d_id, retry_count=retry_count + 1,
+                                    last_attempted_at=now, error_msg=reason)
+                    log.warning(f"  → guardrail blocked: {reason}")
+                    continue
+
             position = risk.position_for(symbol, positions)
             qty_str = str(float(position["quantity"]))
             avg_cost = float(position.get("average_buy_price", 0))
 
             await broker.review_sell_order(account, symbol, qty_str)
+
+            if dry_run:
+                log.info(f"  [DRY-RUN] would SELL {symbol} qty={qty_str}  RSI={signal_rsi}  price={signal_price}")
+                _update_desired(d_id, status="achieved", last_attempted_at=now,
+                                error_msg="dry-run: not submitted")
+                if limits is not None:
+                    limits.record_order_placed()
+                continue
+
             result = await _place_order_with_retry(broker.place_sell_order, account, symbol, qty_str)
 
             if not result:
@@ -318,6 +408,8 @@ async def _reconcile(
                         log.error(f"  ✗ SELL {symbol}: signal_price is None and live quote unavailable — trade not recorded")
                         _update_desired(d_id, status="achieved", last_attempted_at=now, error_msg=None)
                         log.info(f"  ✓ SELL {symbol} achieved  order={order_id}")
+                        if limits is not None:
+                            limits.record_order_placed()
                         continue
                 record_trade(
                     symbol=symbol, side="sell",
@@ -330,6 +422,8 @@ async def _reconcile(
                 _update_desired(d_id, status="achieved",
                                 last_attempted_at=now, error_msg=None)
                 log.info(f"  ✓ SELL {symbol} achieved  order={order_id}")
+                if limits is not None:
+                    limits.record_order_placed()
 
 
 def _record_positions(positions: list[dict], now: datetime) -> None:
@@ -360,7 +454,16 @@ def _record_positions(positions: list[dict], now: datetime) -> None:
         db.commit()
 
 
-async def run_cycle(broker: RobinhoodClient, strategy: Strategy, risk: RiskManager, account: str, token_data: dict | None = None):
+async def run_cycle(
+    broker: RobinhoodClient,
+    strategy: Strategy,
+    risk: RiskManager,
+    account: str,
+    token_data: dict | None = None,
+    *,
+    dry_run: bool = False,
+    limits: RiskLimits | None = None,
+):
     log.info("── running strategy cycle ──")
     now = datetime.now(ET).replace(tzinfo=None)
 
@@ -369,6 +472,8 @@ async def run_cycle(broker: RobinhoodClient, strategy: Strategy, risk: RiskManag
     _record_portfolio(portfolio, now)
     _record_positions(positions, now)
     _record_bot_status(token_data, now)
+
+    portfolio_value = float(portfolio.get("total_value", 0) or 0)
 
     signals = await strategy.generate_signals(broker)
     _record_symbol_snapshots(getattr(strategy, "last_metrics", {}), now)
@@ -379,7 +484,12 @@ async def run_cycle(broker: RobinhoodClient, strategy: Strategy, risk: RiskManag
         log.info("  no new signals")
 
     _sync_desired_state(signals, positions, risk.max_trade_usd, now)
-    await _reconcile(broker, risk, account, positions, now)
+    await _reconcile(
+        broker, risk, account, positions, now,
+        dry_run=dry_run,
+        limits=limits,
+        portfolio_value=portfolio_value,
+    )
 
 
 def _apply_runtime_config(cfg: dict) -> dict:
@@ -408,6 +518,9 @@ def _apply_runtime_config(cfg: dict) -> dict:
                 "max_trade_usd": rc.max_trade_usd,
                 "max_positions": rc.max_positions,
                 "daily_loss_limit_usd": rc.daily_loss_limit_usd,
+                "max_notional_per_order": rc.max_notional_per_order,
+                "max_orders_per_cycle": rc.max_orders_per_cycle,
+                "max_concentration_pct": rc.max_concentration_pct,
             },
         }
     except Exception:
@@ -515,12 +628,32 @@ def _record_bot_status(token_data: dict | None, now: datetime, error: str | None
         db.commit()
 
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Robinhood trading bot")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help=(
+            "Paper/dry-run mode: log intended orders without submitting them to the broker. "
+            "All other logic (signals, risk checks, guardrails, DB writes) runs normally."
+        ),
+    )
+    return parser.parse_args()
+
+
 async def main():
+    args = _parse_args()
     cfg = load_config()
     init_db()
     init_runtime_config(cfg)
 
     account = cfg["account_number"]
+
+    if args.dry_run:
+        log.warning("=" * 60)
+        log.warning("DRY-RUN MODE ACTIVE — no real orders will be placed")
+        log.warning("=" * 60)
 
     shutdown = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -534,50 +667,55 @@ async def main():
         )
 
     log.info("Robinhood RSI trader starting up")
-    log.info(f"Watchlist: {cfg['watchlist']}")
-    log.info(f"RSI thresholds: buy<{cfg['strategy']['oversold']}  sell>{cfg['strategy']['overbought']}")
-    log.info(f"Risk: max ${cfg['risk']['max_trade_usd']}/trade  "
-             f"max {cfg['risk']['max_positions']} positions  "
-             f"daily loss limit ${cfg['risk']['daily_loss_limit_usd']}")
+    log.info(f"Watchlist: {cfg.get('watchlist', [])}")
+
+    from broker.oauth import get_access_token
+    token_data = None
 
     async with RobinhoodClient(cfg) as broker:
         while not shutdown.is_set():
-            _touch_heartbeat()
-            now = datetime.now(ET).replace(tzinfo=None)
-            token_data = broker.get_token_data()
+            try:
+                token_data = await get_access_token(cfg)
+                cfg = load_config()
+                cfg = _apply_runtime_config(cfg)
+                strategy = _make_strategy(cfg)
+                risk = RiskManager(cfg)
+                limits = RiskLimits.from_config(cfg)
 
-            # Rebuild strategy and risk each cycle so dashboard config changes take effect immediately
-            effective_cfg = _apply_runtime_config(cfg)
-            strategy = _make_strategy(effective_cfg)
-            risk = RiskManager(effective_cfg)
-
-            if is_market_open():
-                if _is_paused():
-                    log.info("bot is paused — skipping trade cycle")
-                    _record_bot_status(token_data, now)
-                else:
-                    try:
-                        await run_cycle(broker, strategy, risk, account, token_data)
-                    except Exception as e:
-                        log.error(f"cycle error: {e}", exc_info=True)
-                        _record_bot_status(token_data, now, str(e))
-            else:
-                log.info(f"market closed ({datetime.now(ET).strftime('%a %H:%M ET')}) — sleeping")
-                _record_bot_status(token_data, now)
-
-            # Sleep in 60-second chunks so manual portfolio refresh requests
-            # from the dashboard are serviced within ~60 seconds.
-            remaining = CHECK_INTERVAL_SECS
-            while remaining > 0 and not shutdown.is_set():
-                try:
-                    await asyncio.wait_for(shutdown.wait(), timeout=min(60, remaining))
-                    break
-                except asyncio.TimeoutError:
-                    remaining -= 60
+                if not is_market_open():
+                    log.info("Market closed — skipping cycle")
+                    _record_bot_status(token_data, datetime.now(ET).replace(tzinfo=None))
                     _touch_heartbeat()
-                    await _maybe_refresh_portfolio(broker, account)
+                else:
+                    if _is_paused():
+                        log.info("Bot paused — skipping order placement")
+                        _record_bot_status(token_data, datetime.now(ET).replace(tzinfo=None))
+                        _touch_heartbeat()
+                    else:
+                        await run_cycle(
+                            broker, strategy, risk, account, token_data,
+                            dry_run=args.dry_run,
+                            limits=limits,
+                        )
+                        _touch_heartbeat()
 
-    log.info("Bot shut down cleanly")
+            except Exception as e:
+                log.exception(f"Cycle error: {e}")
+                _record_bot_status(token_data, datetime.now(ET).replace(tzinfo=None), error=str(e))
+
+            # Sleep in 60s increments so dashboard ⟳ refresh requests are serviced promptly
+            elapsed = 0
+            while elapsed < CHECK_INTERVAL_SECS and not shutdown.is_set():
+                await asyncio.sleep(60)
+                elapsed += 60
+                _touch_heartbeat()
+                try:
+                    async with RobinhoodClient(cfg) as refresh_broker:
+                        await _maybe_refresh_portfolio(refresh_broker, account)
+                except Exception:
+                    pass
+
+    log.info("Robinhood trader shut down cleanly")
 
 
 if __name__ == "__main__":
