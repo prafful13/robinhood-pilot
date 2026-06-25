@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 MCP client that wraps Robinhood's agent HTTP endpoint.
 Each public method corresponds to a Robinhood MCP tool.
@@ -59,6 +60,7 @@ class RobinhoodClient:
     def get_token_data(self) -> dict | None:
         """Return raw token dict (saved_at, expires_in) for dashboard status display."""
         from broker.oauth import _load_tokens
+
         return _load_tokens()
 
     def _next_id(self) -> int:
@@ -173,14 +175,21 @@ class RobinhoodClient:
                 out[sym] = q
         return out
 
-    async def get_historicals(self, symbols: list[str], interval: str = "15minute", lookback_days: int = 7) -> dict[str, list]:
-        start = (datetime.now(pytz.UTC) - timedelta(days=lookback_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        result = await self.call_tool("get_equity_historicals", {
-            "symbols": symbols,
-            "start_time": start,
-            "interval": interval,
-            "bounds": "regular",
-        })
+    async def get_historicals(
+        self, symbols: list[str], interval: str = "15minute", lookback_days: int = 7
+    ) -> dict[str, list]:
+        start = (datetime.now(pytz.UTC) - timedelta(days=lookback_days)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        result = await self.call_tool(
+            "get_equity_historicals",
+            {
+                "symbols": symbols,
+                "start_time": start,
+                "interval": interval,
+                "bounds": "regular",
+            },
+        )
         out = {}
         for item in result.get("data", {}).get("results", []):
             out[item["symbol"]] = item.get("bars", [])
@@ -194,47 +203,61 @@ class RobinhoodClient:
         result = await self.call_tool("get_portfolio", {"account_number": account_number})
         return result.get("data", {})
 
-    async def review_order(self, account_number: str, symbol: str, side: str, dollar_amount: str) -> dict:
-        return await self.call_tool("review_equity_order", {
-            "account_number": account_number,
-            "symbol": symbol,
-            "side": side,
-            "type": "market",
-            "dollar_amount": dollar_amount,
-            "time_in_force": "gfd",
-        })
+    async def review_order(
+        self, account_number: str, symbol: str, side: str, dollar_amount: str
+    ) -> dict:
+        return await self.call_tool(
+            "review_equity_order",
+            {
+                "account_number": account_number,
+                "symbol": symbol,
+                "side": side,
+                "type": "market",
+                "dollar_amount": dollar_amount,
+                "time_in_force": "gfd",
+            },
+        )
 
     async def review_sell_order(self, account_number: str, symbol: str, quantity: str) -> dict:
-        return await self.call_tool("review_equity_order", {
-            "account_number": account_number,
-            "symbol": symbol,
-            "side": "sell",
-            "type": "market",
-            "quantity": quantity,
-            "time_in_force": "gfd",
-        })
+        return await self.call_tool(
+            "review_equity_order",
+            {
+                "account_number": account_number,
+                "symbol": symbol,
+                "side": "sell",
+                "type": "market",
+                "quantity": quantity,
+                "time_in_force": "gfd",
+            },
+        )
 
     async def place_buy_order(self, account_number: str, symbol: str, dollar_amount: str) -> dict:
-        return await self.call_tool("place_equity_order", {
-            "account_number": account_number,
-            "symbol": symbol,
-            "side": "buy",
-            "type": "market",
-            "dollar_amount": dollar_amount,
-            "time_in_force": "gfd",
-            "ref_id": str(uuid.uuid4()),
-        })
+        return await self.call_tool(
+            "place_equity_order",
+            {
+                "account_number": account_number,
+                "symbol": symbol,
+                "side": "buy",
+                "type": "market",
+                "dollar_amount": dollar_amount,
+                "time_in_force": "gfd",
+                "ref_id": str(uuid.uuid4()),
+            },
+        )
 
     async def place_sell_order(self, account_number: str, symbol: str, quantity: str) -> dict:
-        return await self.call_tool("place_equity_order", {
-            "account_number": account_number,
-            "symbol": symbol,
-            "side": "sell",
-            "type": "market",
-            "quantity": quantity,
-            "time_in_force": "gfd",
-            "ref_id": str(uuid.uuid4()),
-        })
+        return await self.call_tool(
+            "place_equity_order",
+            {
+                "account_number": account_number,
+                "symbol": symbol,
+                "side": "sell",
+                "type": "market",
+                "quantity": quantity,
+                "time_in_force": "gfd",
+                "ref_id": str(uuid.uuid4()),
+            },
+        )
 
     async def get_orders(self, account_number: str) -> list[dict]:
         result = await self.call_tool("get_equity_orders", {"account_number": account_number})

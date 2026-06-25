@@ -2,14 +2,20 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
+from invoke import Config, Context
+
+
+def _mock_ctx() -> Context:
+    c = Context(config=Config())
+    c.run = MagicMock(return_value=MagicMock(ok=True, stdout="", stderr=""))
+    return c
 
 
 class TestK8sLoadImages:
     def test_k8s_load_images_is_noop(self):
         from tasks import k8s_load_images
 
-        mock_context = MagicMock()
+        mock_context = _mock_ctx()
 
         k8s_load_images(mock_context)
 
@@ -18,7 +24,7 @@ class TestK8sLoadImages:
     def test_k8s_load_images_prints_explanation(self, capsys):
         from tasks import k8s_load_images
 
-        mock_context = MagicMock()
+        mock_context = _mock_ctx()
 
         k8s_load_images(mock_context)
 
@@ -48,7 +54,7 @@ class TestK8sLoadImages:
     def test_k8s_load_images_does_not_run_docker_save_commands(self):
         from tasks import k8s_load_images
 
-        mock_context = MagicMock()
+        mock_context = _mock_ctx()
 
         k8s_load_images(mock_context)
 

@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 FIFO cost-basis tax calculator.
 Reads all trades from the local DB and returns:
@@ -9,7 +10,6 @@ Reads all trades from the local DB and returns:
 
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from datetime import date
 
 from db.database import SessionLocal
 from db.models import Trade
@@ -27,11 +27,7 @@ class TaxSummary:
 
 def compute(short_term_rate: float = 0.24, long_term_rate: float = 0.15) -> TaxSummary:
     with SessionLocal() as db:
-        trades = (
-            db.query(Trade)
-            .order_by(Trade.executed_at)
-            .all()
-        )
+        trades = db.query(Trade).order_by(Trade.executed_at).all()
 
     # FIFO lots: symbol -> deque of (quantity, price, date)
     lots: dict[str, deque] = defaultdict(deque)
@@ -42,11 +38,13 @@ def compute(short_term_rate: float = 0.24, long_term_rate: float = 0.15) -> TaxS
 
     for trade in trades:
         if trade.side == "buy":
-            lots[trade.symbol].append({
-                "qty": trade.quantity,
-                "price": trade.price,
-                "date": trade.trade_date,
-            })
+            lots[trade.symbol].append(
+                {
+                    "qty": trade.quantity,
+                    "price": trade.price,
+                    "date": trade.trade_date,
+                }
+            )
         elif trade.side == "sell":
             remaining = trade.quantity
             while remaining > 0 and lots[trade.symbol]:

@@ -24,21 +24,30 @@ def _to_local(dt: datetime | None) -> datetime | None:
 
 # ── Demo data (only used when DEMO_MODE=1) ────────────────────────────────────
 
+
 def _demo_snapshots() -> pd.DataFrame:
     import numpy as np
+
     rng = pd.date_range(end=datetime.now(), periods=200, freq="2h")
     equity = 1000.0
     rows = []
     for ts in rng:
         equity += np.random.normal(0.8, 4.5)
         equity = max(900, equity)
-        rows.append({"recorded_at": ts.replace(tzinfo=None), "equity": round(equity, 2),
-                     "cash": round(equity * 0.35, 2), "portfolio_value": round(equity * 0.65, 2)})
+        rows.append(
+            {
+                "recorded_at": ts.replace(tzinfo=None),
+                "equity": round(equity, 2),
+                "cash": round(equity * 0.35, 2),
+                "portfolio_value": round(equity * 0.65, 2),
+            }
+        )
     return pd.DataFrame(rows)
 
 
 def _demo_trades() -> pd.DataFrame:
     import numpy as np
+
     symbols = ["AAPL", "NVDA", "GOOGL", "AVGO", "XLE"]
     rows = []
     now = datetime.now()
@@ -49,17 +58,25 @@ def _demo_trades() -> pd.DataFrame:
         side = "buy" if i % 2 == 0 else "sell"
         qty = round(np.random.uniform(0.5, 1.4), 4)
         pnl = round(np.random.normal(3.2, 8.5), 2) if side == "sell" else 0.0
-        rows.append({
-            "id": i + 1, "symbol": sym, "side": side,
-            "quantity": qty, "price": round(price, 2),
-            "dollar_amount": round(qty * price, 2),
-            "trade_date": (now - timedelta(days=i * 1.3)).date(),
-            "executed_at": now - timedelta(days=i * 1.3, hours=2),
-            "rsi_at_signal": round(np.random.uniform(24, 36) if side == "buy" else np.random.uniform(68, 78), 1),
-            "realized_pnl": pnl, "holding_days": np.random.randint(1, 5) if side == "sell" else None,
-            "cost_basis": round(qty * price * 0.98, 2) if side == "sell" else None,
-            "order_id": f"demo-{1000+i}",
-        })
+        rows.append(
+            {
+                "id": i + 1,
+                "symbol": sym,
+                "side": side,
+                "quantity": qty,
+                "price": round(price, 2),
+                "dollar_amount": round(qty * price, 2),
+                "trade_date": (now - timedelta(days=i * 1.3)).date(),
+                "executed_at": now - timedelta(days=i * 1.3, hours=2),
+                "rsi_at_signal": round(
+                    np.random.uniform(24, 36) if side == "buy" else np.random.uniform(68, 78), 1
+                ),
+                "realized_pnl": pnl,
+                "holding_days": np.random.randint(1, 5) if side == "sell" else None,
+                "cost_basis": round(qty * price * 0.98, 2) if side == "sell" else None,
+                "order_id": f"demo-{1000 + i}",
+            }
+        )
     return pd.DataFrame(rows)
 
 
@@ -74,34 +91,61 @@ def _demo_bot_status() -> SimpleNamespace:
 
 
 def _demo_symbol_snapshots() -> pd.DataFrame:
-    symbols  = ["GOOGL", "AAPL", "NVDA", "AVGO", "CRWV", "XLE"]
-    prices   = [348.1, 298.7, 209.1, 396.9, 111.9, 53.8]
-    rsis     = [45.2, 38.7, 62.1, 29.4, 71.8, 55.3]
-    signals  = [None, None, None, "buy", "sell", None]
+    symbols = ["GOOGL", "AAPL", "NVDA", "AVGO", "CRWV", "XLE"]
+    prices = [348.1, 298.7, 209.1, 396.9, 111.9, 53.8]
+    rsis = [45.2, 38.7, 62.1, 29.4, 71.8, 55.3]
+    signals = [None, None, None, "buy", "sell", None]
     mac_hist = [0.12, -0.05, 0.33, 0.08, -0.21, 0.02]
     bb_pct_b = [52.1, 38.4, 68.9, 18.3, 94.2, 50.1]
     now = datetime.now().replace(tzinfo=None) - timedelta(minutes=4)
-    return pd.DataFrame([
-        {"symbol": s, "recorded_at": now, "rsi": r, "price": p,
-         "signal": sig, "macd_hist": m, "bb_pct_b": b}
-        for s, r, p, sig, m, b in zip(symbols, rsis, prices, signals, mac_hist, bb_pct_b)
-    ])
+    return pd.DataFrame(
+        [
+            {
+                "symbol": s,
+                "recorded_at": now,
+                "rsi": r,
+                "price": p,
+                "signal": sig,
+                "macd_hist": m,
+                "bb_pct_b": b,
+            }
+            for s, r, p, sig, m, b in zip(symbols, rsis, prices, signals, mac_hist, bb_pct_b)
+        ]
+    )
 
 
 def _demo_desired_positions() -> pd.DataFrame:
     now = datetime.now().replace(tzinfo=None)
-    return pd.DataFrame([
-        {"id": 1, "symbol": "NVDA", "side": "buy", "status": "pending",
-         "retry_count": 2, "target_usd": 300.0, "signal_rsi": 27.4, "signal_price": 202.95,
-         "created_at": now - timedelta(minutes=30),
-         "last_attempted_at": now - timedelta(minutes=15),
-         "error_msg": "order failed after in-cycle retries"},
-        {"id": 2, "symbol": "AVGO", "side": "buy", "status": "failed",
-         "retry_count": 5, "target_usd": 300.0, "signal_rsi": 26.1, "signal_price": 382.35,
-         "created_at": now - timedelta(hours=2),
-         "last_attempted_at": now - timedelta(minutes=30),
-         "error_msg": "exceeded 5 cycle retries"},
-    ])
+    return pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "symbol": "NVDA",
+                "side": "buy",
+                "status": "pending",
+                "retry_count": 2,
+                "target_usd": 300.0,
+                "signal_rsi": 27.4,
+                "signal_price": 202.95,
+                "created_at": now - timedelta(minutes=30),
+                "last_attempted_at": now - timedelta(minutes=15),
+                "error_msg": "order failed after in-cycle retries",
+            },
+            {
+                "id": 2,
+                "symbol": "AVGO",
+                "side": "buy",
+                "status": "failed",
+                "retry_count": 5,
+                "target_usd": 300.0,
+                "signal_rsi": 26.1,
+                "signal_price": 382.35,
+                "created_at": now - timedelta(hours=2),
+                "last_attempted_at": now - timedelta(minutes=30),
+                "error_msg": "exceeded 5 cycle retries",
+            },
+        ]
+    )
 
 
 def _demo_bot_control() -> SimpleNamespace:
@@ -110,10 +154,18 @@ def _demo_bot_control() -> SimpleNamespace:
 
 def _demo_runtime_config() -> SimpleNamespace:
     return SimpleNamespace(
-        strategy="rsi_mean_reversion", rsi_period=14, oversold=30, overbought=70,
-        macd_fast=12, macd_slow=26, macd_signal_period=9,
-        bb_period=20, bb_std_dev=2.0,
-        max_trade_usd=300.0, max_positions=5, daily_loss_limit_usd=50.0,
+        strategy="rsi_mean_reversion",
+        rsi_period=14,
+        oversold=30,
+        overbought=70,
+        macd_fast=12,
+        macd_slow=26,
+        macd_signal_period=9,
+        bb_period=20,
+        bb_std_dev=2.0,
+        max_trade_usd=300.0,
+        max_positions=5,
+        daily_loss_limit_usd=50.0,
         updated_at=datetime.now(ET).replace(tzinfo=None) - timedelta(hours=2),
     )
 
@@ -124,13 +176,14 @@ if not DEMO_MODE:
     from db.database import SessionLocal, init_db, init_runtime_config
     from db.models import BotControl, BotStatus, PortfolioSnapshot, RuntimeConfig, Trade
     from tax.calculator import compute as compute_tax
+
     init_db()
 
 st.set_page_config(
     page_title="Prafful's Sick of Trading",
     page_icon="📈",
     layout="wide",
-    menu_items={},          # hides the hamburger menu (Get Help / Report Bug / About)
+    menu_items={},  # hides the hamburger menu (Get Help / Report Bug / About)
 )
 
 # Hide the Streamlit Deploy button and hamburger menu — local private app
@@ -163,11 +216,19 @@ PERIOD_OPTIONS = {
 def load_config() -> dict:
     if DEMO_MODE:
         return {
-            "account_number": "DEMO0001", "display_timezone": "America/Los_Angeles",
+            "account_number": "DEMO0001",
+            "display_timezone": "America/Los_Angeles",
             "watchlist": ["GOOGL", "AAPL", "NVDA", "AVGO", "XLE"],
-            "strategy": {"rsi_period": 14, "oversold": 30, "overbought": 70,
-                         "macd_fast": 12, "macd_slow": 26, "macd_signal_period": 9,
-                         "bb_period": 20, "bb_std_dev": 2.0},
+            "strategy": {
+                "rsi_period": 14,
+                "oversold": 30,
+                "overbought": 70,
+                "macd_fast": 12,
+                "macd_slow": 26,
+                "macd_signal_period": 9,
+                "bb_period": 20,
+                "bb_std_dev": 2.0,
+            },
             "risk": {"max_trade_usd": 300, "max_positions": 5, "daily_loss_limit_usd": 50},
             "tax": {"short_term_rate": 0.24, "long_term_rate": 0.15},
         }
@@ -184,14 +245,26 @@ def load_trades() -> pd.DataFrame:
         rows = db.query(Trade).order_by(Trade.executed_at.desc()).all()
     if not rows:
         return pd.DataFrame()
-    return pd.DataFrame([{
-        "id": t.id, "symbol": t.symbol, "side": t.side,
-        "quantity": t.quantity, "price": t.price,
-        "dollar_amount": t.dollar_amount, "trade_date": t.trade_date,
-        "executed_at": t.executed_at, "rsi_at_signal": t.rsi_at_signal,
-        "realized_pnl": t.realized_pnl, "holding_days": t.holding_days,
-        "cost_basis": t.cost_basis, "order_id": t.order_id,
-    } for t in rows])
+    return pd.DataFrame(
+        [
+            {
+                "id": t.id,
+                "symbol": t.symbol,
+                "side": t.side,
+                "quantity": t.quantity,
+                "price": t.price,
+                "dollar_amount": t.dollar_amount,
+                "trade_date": t.trade_date,
+                "executed_at": t.executed_at,
+                "rsi_at_signal": t.rsi_at_signal,
+                "realized_pnl": t.realized_pnl,
+                "holding_days": t.holding_days,
+                "cost_basis": t.cost_basis,
+                "order_id": t.order_id,
+            }
+            for t in rows
+        ]
+    )
 
 
 @st.cache_data(ttl=REFRESH_SECS)
@@ -202,12 +275,17 @@ def load_portfolio_snapshots() -> pd.DataFrame:
         rows = db.query(PortfolioSnapshot).order_by(PortfolioSnapshot.recorded_at.asc()).all()
     if not rows:
         return pd.DataFrame()
-    return pd.DataFrame([{
-        "recorded_at": s.recorded_at,
-        "equity": s.equity,
-        "cash": s.cash,
-        "portfolio_value": s.portfolio_value,
-    } for s in rows])
+    return pd.DataFrame(
+        [
+            {
+                "recorded_at": s.recorded_at,
+                "equity": s.equity,
+                "cash": s.cash,
+                "portfolio_value": s.portfolio_value,
+            }
+            for s in rows
+        ]
+    )
 
 
 def load_bot_control() -> SimpleNamespace:
@@ -215,7 +293,9 @@ def load_bot_control() -> SimpleNamespace:
         return _demo_bot_control()
     with SessionLocal() as db:
         ctrl = db.get(BotControl, 1)
-        return SimpleNamespace(paused=bool(ctrl and ctrl.paused), paused_at=ctrl.paused_at if ctrl else None)
+        return SimpleNamespace(
+            paused=bool(ctrl and ctrl.paused), paused_at=ctrl.paused_at if ctrl else None
+        )
 
 
 def _request_portfolio_refresh() -> None:
@@ -267,12 +347,24 @@ def load_tax_summary(short_rate: float, long_rate: float):
         sells = df[df["side"] == "sell"] if not df.empty else pd.DataFrame()
         st_gain = float(sells["realized_pnl"].sum()) if not sells.empty else 42.18
         lt_gain = 0.0
-        from types import SimpleNamespace as SN
-        by_sym = {sym: {"short_term": float(g["realized_pnl"].sum()), "long_term": 0.0}
-                  for sym, g in sells.groupby("symbol")} if not sells.empty else {}
-        return SN(short_term_gain=st_gain, short_term_tax=round(st_gain*short_rate, 2),
-                  long_term_gain=lt_gain, long_term_tax=0.0,
-                  total_tax=round(st_gain*short_rate, 2), by_symbol=by_sym)
+        from types import SimpleNamespace
+
+        by_sym = (
+            {
+                sym: {"short_term": float(g["realized_pnl"].sum()), "long_term": 0.0}
+                for sym, g in sells.groupby("symbol")
+            }
+            if not sells.empty
+            else {}
+        )
+        return SimpleNamespace(
+            short_term_gain=st_gain,
+            short_term_tax=round(st_gain * short_rate, 2),
+            long_term_gain=lt_gain,
+            long_term_tax=0.0,
+            total_tax=round(st_gain * short_rate, 2),
+            by_symbol=by_sym,
+        )
     return compute_tax(short_rate, long_rate)
 
 
@@ -281,29 +373,38 @@ def load_symbol_snapshots() -> pd.DataFrame:
     if DEMO_MODE:
         return _demo_symbol_snapshots()
     from db.models import SymbolSnapshot
+
     with SessionLocal() as db:
-        rows = (
-            db.query(SymbolSnapshot)
-            .order_by(SymbolSnapshot.recorded_at.desc())
-            .limit(200)
-            .all()
-        )
+        rows = db.query(SymbolSnapshot).order_by(SymbolSnapshot.recorded_at.desc()).limit(200).all()
     if not rows:
         return pd.DataFrame()
-    df = pd.DataFrame([{
-        "symbol": r.symbol, "recorded_at": r.recorded_at,
-        "rsi": r.rsi, "price": r.price, "signal": r.signal,
-        "macd_hist": getattr(r, "macd_hist", None),
-        "bb_pct_b": getattr(r, "bb_pct_b", None),
-    } for r in rows])
+    df = pd.DataFrame(
+        [
+            {
+                "symbol": r.symbol,
+                "recorded_at": r.recorded_at,
+                "rsi": r.rsi,
+                "price": r.price,
+                "signal": r.signal,
+                "macd_hist": getattr(r, "macd_hist", None),
+                "bb_pct_b": getattr(r, "bb_pct_b", None),
+            }
+            for r in rows
+        ]
+    )
     # Keep only the most recent snapshot per symbol
-    return df.sort_values("recorded_at", ascending=False).drop_duplicates("symbol").reset_index(drop=True)
+    return (
+        df.sort_values("recorded_at", ascending=False)
+        .drop_duplicates("symbol")
+        .reset_index(drop=True)
+    )
 
 
 def load_desired_positions() -> pd.DataFrame:
     if DEMO_MODE:
         return _demo_desired_positions()
     from db.models import DesiredPosition
+
     with SessionLocal() as db:
         rows = (
             db.query(DesiredPosition)
@@ -313,21 +414,35 @@ def load_desired_positions() -> pd.DataFrame:
         )
     if not rows:
         return pd.DataFrame()
-    return pd.DataFrame([{
-        "id": r.id, "symbol": r.symbol, "side": r.side, "status": r.status,
-        "retry_count": r.retry_count, "target_usd": r.target_usd,
-        "signal_rsi": r.signal_rsi, "signal_price": r.signal_price,
-        "created_at": r.created_at, "last_attempted_at": r.last_attempted_at,
-        "error_msg": r.error_msg,
-    } for r in rows])
+    return pd.DataFrame(
+        [
+            {
+                "id": r.id,
+                "symbol": r.symbol,
+                "side": r.side,
+                "status": r.status,
+                "retry_count": r.retry_count,
+                "target_usd": r.target_usd,
+                "signal_rsi": r.signal_rsi,
+                "signal_price": r.signal_price,
+                "created_at": r.created_at,
+                "last_attempted_at": r.last_attempted_at,
+                "error_msg": r.error_msg,
+            }
+            for r in rows
+        ]
+    )
 
 
 def _clear_desired_positions(ids: list[int]) -> None:
     if DEMO_MODE:
         return
     from db.models import DesiredPosition
+
     with SessionLocal() as db:
-        db.query(DesiredPosition).filter(DesiredPosition.id.in_(ids)).delete(synchronize_session=False)
+        db.query(DesiredPosition).filter(DesiredPosition.id.in_(ids)).delete(
+            synchronize_session=False
+        )
         db.commit()
 
 
@@ -339,30 +454,45 @@ def load_runtime_config() -> SimpleNamespace | None:
     if rc is None:
         return None
     return SimpleNamespace(
-        strategy=rc.strategy, rsi_period=rc.rsi_period,
-        oversold=rc.oversold, overbought=rc.overbought,
-        macd_fast=rc.macd_fast, macd_slow=rc.macd_slow, macd_signal_period=rc.macd_signal_period,
-        bb_period=rc.bb_period, bb_std_dev=rc.bb_std_dev,
-        max_trade_usd=rc.max_trade_usd, max_positions=rc.max_positions,
-        daily_loss_limit_usd=rc.daily_loss_limit_usd, updated_at=rc.updated_at,
+        strategy=rc.strategy,
+        rsi_period=rc.rsi_period,
+        oversold=rc.oversold,
+        overbought=rc.overbought,
+        macd_fast=rc.macd_fast,
+        macd_slow=rc.macd_slow,
+        macd_signal_period=rc.macd_signal_period,
+        bb_period=rc.bb_period,
+        bb_std_dev=rc.bb_std_dev,
+        max_trade_usd=rc.max_trade_usd,
+        max_positions=rc.max_positions,
+        daily_loss_limit_usd=rc.daily_loss_limit_usd,
+        updated_at=rc.updated_at,
     )
 
 
 STRATEGY_OPTIONS = {
-    "RSI Mean-Reversion":  "rsi_mean_reversion",
-    "MACD Crossover":      "macd_crossover",
-    "Bollinger Bands":     "bollinger_bands",
-    "RSI + MACD Combo":    "rsi_macd_combo",
+    "RSI Mean-Reversion": "rsi_mean_reversion",
+    "MACD Crossover": "macd_crossover",
+    "Bollinger Bands": "bollinger_bands",
+    "RSI + MACD Combo": "rsi_macd_combo",
 }
 _STRATEGY_KEYS = list(STRATEGY_OPTIONS.keys())
 _STRATEGY_VALS = list(STRATEGY_OPTIONS.values())
 
 
 def _save_runtime_config(
-    strategy: str, rsi_period: int, oversold: int, overbought: int,
-    macd_fast: int, macd_slow: int, macd_signal_period: int,
-    bb_period: int, bb_std_dev: float,
-    max_trade_usd: float, max_positions: int, daily_loss_limit_usd: float,
+    strategy: str,
+    rsi_period: int,
+    oversold: int,
+    overbought: int,
+    macd_fast: int,
+    macd_slow: int,
+    macd_signal_period: int,
+    bb_period: int,
+    bb_std_dev: float,
+    max_trade_usd: float,
+    max_positions: int,
+    daily_loss_limit_usd: float,
 ) -> None:
     if DEMO_MODE:
         return
@@ -384,14 +514,24 @@ def _save_runtime_config(
             rc.daily_loss_limit_usd = daily_loss_limit_usd
             rc.updated_at = now_et
         else:
-            db.add(RuntimeConfig(
-                id=1, strategy=strategy, rsi_period=rsi_period,
-                oversold=oversold, overbought=overbought,
-                macd_fast=macd_fast, macd_slow=macd_slow, macd_signal_period=macd_signal_period,
-                bb_period=bb_period, bb_std_dev=bb_std_dev,
-                max_trade_usd=max_trade_usd, max_positions=max_positions,
-                daily_loss_limit_usd=daily_loss_limit_usd, updated_at=now_et,
-            ))
+            db.add(
+                RuntimeConfig(
+                    id=1,
+                    strategy=strategy,
+                    rsi_period=rsi_period,
+                    oversold=oversold,
+                    overbought=overbought,
+                    macd_fast=macd_fast,
+                    macd_slow=macd_slow,
+                    macd_signal_period=macd_signal_period,
+                    bb_period=bb_period,
+                    bb_std_dev=bb_std_dev,
+                    max_trade_usd=max_trade_usd,
+                    max_positions=max_positions,
+                    daily_loss_limit_usd=daily_loss_limit_usd,
+                    updated_at=now_et,
+                )
+            )
         db.commit()
 
 
@@ -415,7 +555,9 @@ rc = load_runtime_config()
 s_def, r_def = cfg["strategy"], cfg["risk"]
 
 current_strategy_key = rc.strategy if rc else "rsi_mean_reversion"
-current_strategy_idx = _STRATEGY_VALS.index(current_strategy_key) if current_strategy_key in _STRATEGY_VALS else 0
+current_strategy_idx = (
+    _STRATEGY_VALS.index(current_strategy_key) if current_strategy_key in _STRATEGY_VALS else 0
+)
 
 # Selectbox OUTSIDE the form so changing it rerenders immediately (conditional params)
 strategy_label = st.sidebar.selectbox("Strategy", _STRATEGY_KEYS, index=current_strategy_idx)
@@ -427,82 +569,145 @@ with st.sidebar:
         if strategy_key in ("rsi_mean_reversion", "rsi_macd_combo"):
             st.markdown("**RSI Parameters**")
             rsi_period = st.number_input(
-                "Period", min_value=2, max_value=50, step=1,
+                "Period",
+                min_value=2,
+                max_value=50,
+                step=1,
                 value=rc.rsi_period if rc else s_def["rsi_period"],
             )
             ov_col, ob_col = st.columns(2)
-            oversold   = ov_col.number_input("Buy <", min_value=1, max_value=49, step=1,
-                                              value=rc.oversold if rc else s_def["oversold"])
-            overbought = ob_col.number_input("Sell >", min_value=51, max_value=99, step=1,
-                                              value=rc.overbought if rc else s_def["overbought"])
+            oversold = ov_col.number_input(
+                "Buy <",
+                min_value=1,
+                max_value=49,
+                step=1,
+                value=rc.oversold if rc else s_def["oversold"],
+            )
+            overbought = ob_col.number_input(
+                "Sell >",
+                min_value=51,
+                max_value=99,
+                step=1,
+                value=rc.overbought if rc else s_def["overbought"],
+            )
         else:
             rsi_period = rc.rsi_period if rc else s_def["rsi_period"]
-            oversold   = rc.oversold   if rc else s_def["oversold"]
+            oversold = rc.oversold if rc else s_def["oversold"]
             overbought = rc.overbought if rc else s_def["overbought"]
 
         # ── MACD params: MACD Crossover and RSI+MACD Combo ─────────────────
         if strategy_key in ("macd_crossover", "rsi_macd_combo"):
             st.markdown("**MACD Parameters**")
             mf_col, ms_col, msig_col = st.columns(3)
-            macd_fast = mf_col.number_input("Fast", min_value=2, max_value=50, step=1,
-                                             value=rc.macd_fast if rc else s_def.get("macd_fast", 12))
-            macd_slow = ms_col.number_input("Slow", min_value=3, max_value=200, step=1,
-                                             value=rc.macd_slow if rc else s_def.get("macd_slow", 26))
-            macd_sig  = msig_col.number_input("Signal", min_value=2, max_value=50, step=1,
-                                               value=rc.macd_signal_period if rc else s_def.get("macd_signal_period", 9))
+            macd_fast = mf_col.number_input(
+                "Fast",
+                min_value=2,
+                max_value=50,
+                step=1,
+                value=rc.macd_fast if rc else s_def.get("macd_fast", 12),
+            )
+            macd_slow = ms_col.number_input(
+                "Slow",
+                min_value=3,
+                max_value=200,
+                step=1,
+                value=rc.macd_slow if rc else s_def.get("macd_slow", 26),
+            )
+            macd_sig = msig_col.number_input(
+                "Signal",
+                min_value=2,
+                max_value=50,
+                step=1,
+                value=rc.macd_signal_period if rc else s_def.get("macd_signal_period", 9),
+            )
         else:
-            macd_fast = rc.macd_fast          if rc else s_def.get("macd_fast", 12)
-            macd_slow = rc.macd_slow          if rc else s_def.get("macd_slow", 26)
-            macd_sig  = rc.macd_signal_period if rc else s_def.get("macd_signal_period", 9)
+            macd_fast = rc.macd_fast if rc else s_def.get("macd_fast", 12)
+            macd_slow = rc.macd_slow if rc else s_def.get("macd_slow", 26)
+            macd_sig = rc.macd_signal_period if rc else s_def.get("macd_signal_period", 9)
 
         # ── Bollinger Bands params ──────────────────────────────────────────
         if strategy_key == "bollinger_bands":
             st.markdown("**Bollinger Bands**")
             bb_p_col, bb_s_col = st.columns(2)
-            bb_period = bb_p_col.number_input("Period", min_value=5, max_value=100, step=1,
-                                               value=rc.bb_period if rc else s_def.get("bb_period", 20))
-            bb_std    = bb_s_col.number_input("Std devs", min_value=0.5, max_value=5.0,
-                                               step=0.5, format="%.1f",
-                                               value=float(rc.bb_std_dev if rc else s_def.get("bb_std_dev", 2.0)))
+            bb_period = bb_p_col.number_input(
+                "Period",
+                min_value=5,
+                max_value=100,
+                step=1,
+                value=rc.bb_period if rc else s_def.get("bb_period", 20),
+            )
+            bb_std = bb_s_col.number_input(
+                "Std devs",
+                min_value=0.5,
+                max_value=5.0,
+                step=0.5,
+                format="%.1f",
+                value=float(rc.bb_std_dev if rc else s_def.get("bb_std_dev", 2.0)),
+            )
         else:
-            bb_period = rc.bb_period  if rc else s_def.get("bb_period", 20)
-            bb_std    = float(rc.bb_std_dev if rc else s_def.get("bb_std_dev", 2.0))
+            bb_period = rc.bb_period if rc else s_def.get("bb_period", 20)
+            bb_std = float(rc.bb_std_dev if rc else s_def.get("bb_std_dev", 2.0))
 
         # ── Risk limits (always shown) ──────────────────────────────────────
         st.markdown("**Risk Limits**")
         max_trade = st.number_input(
-            "Max trade ($)", min_value=1.0, step=10.0, format="%.0f",
+            "Max trade ($)",
+            min_value=1.0,
+            step=10.0,
+            format="%.0f",
             value=float(rc.max_trade_usd if rc else r_def["max_trade_usd"]),
         )
         mp_col, dl_col = st.columns(2)
-        max_pos    = mp_col.number_input("Max pos", min_value=1, max_value=20, step=1,
-                                          value=rc.max_positions if rc else r_def["max_positions"])
-        daily_loss = dl_col.number_input("Daily loss ($)", min_value=0.0, step=5.0, format="%.0f",
-                                          value=float(rc.daily_loss_limit_usd if rc else r_def["daily_loss_limit_usd"]))
+        max_pos = mp_col.number_input(
+            "Max pos",
+            min_value=1,
+            max_value=20,
+            step=1,
+            value=rc.max_positions if rc else r_def["max_positions"],
+        )
+        daily_loss = dl_col.number_input(
+            "Daily loss ($)",
+            min_value=0.0,
+            step=5.0,
+            format="%.0f",
+            value=float(rc.daily_loss_limit_usd if rc else r_def["daily_loss_limit_usd"]),
+        )
 
         submitted = st.form_submit_button("Apply Config", type="primary", use_container_width=True)
 
 if submitted:
     _save_runtime_config(
         strategy=STRATEGY_OPTIONS[strategy_label],
-        rsi_period=int(rsi_period), oversold=int(oversold), overbought=int(overbought),
-        macd_fast=int(macd_fast), macd_slow=int(macd_slow), macd_signal_period=int(macd_sig),
-        bb_period=int(bb_period), bb_std_dev=float(bb_std),
-        max_trade_usd=float(max_trade), max_positions=int(max_pos),
+        rsi_period=int(rsi_period),
+        oversold=int(oversold),
+        overbought=int(overbought),
+        macd_fast=int(macd_fast),
+        macd_slow=int(macd_slow),
+        macd_signal_period=int(macd_sig),
+        bb_period=int(bb_period),
+        bb_std_dev=float(bb_std),
+        max_trade_usd=float(max_trade),
+        max_positions=int(max_pos),
         daily_loss_limit_usd=float(daily_loss),
     )
     st.cache_data.clear()
     st.rerun()
 
 if rc and rc.updated_at:
-    st.sidebar.caption(f"Config saved: {_to_local(rc.updated_at).strftime(f'%b %d %H:%M {_TZ_ABBR}')}")
+    st.sidebar.caption(
+        f"Config saved: {_to_local(rc.updated_at).strftime(f'%b %d %H:%M {_TZ_ABBR}')}"
+    )
 
 st.sidebar.divider()
 st.sidebar.markdown("##### Tax Rates")
-short_pct = st.sidebar.slider("Short-term", 10, 50, int(tax_cfg["short_term_rate"] * 100), 1, format="%d%%")
-long_pct  = st.sidebar.slider("Long-term",   0, 25, int(tax_cfg["long_term_rate"]  * 100), 1, format="%d%%")
+short_pct = st.sidebar.slider(
+    "Short-term", 10, 50, int(tax_cfg["short_term_rate"] * 100), 1, format="%d%%"
+)
+long_pct = st.sidebar.slider(
+    "Long-term", 0, 25, int(tax_cfg["long_term_rate"] * 100), 1, format="%d%%"
+)
 short_rate = short_pct / 100
-long_rate  = long_pct  / 100
+long_rate = long_pct / 100
 
 st.sidebar.divider()
 with st.sidebar.expander("Strategy Reference"):
@@ -535,7 +740,7 @@ st.caption(f"Last updated: {datetime.now(_LOCAL_TZ).strftime(f'%b %d %Y  %H:%M:%
 _desired_df = load_desired_positions()
 if not _desired_df.empty:
     _n_pending = (_desired_df["status"] == "pending").sum()
-    _n_failed  = (_desired_df["status"] == "failed").sum()
+    _n_failed = (_desired_df["status"] == "failed").sum()
 
     _recon_hdr, _recon_clear = st.columns([5, 1])
     _recon_hdr.subheader("Trade Reconciliation")
@@ -556,9 +761,7 @@ if not _desired_df.empty:
         lambda r: f"BUY ${r['target_usd']:.0f}" if r["side"] == "buy" else "SELL",
         axis=1,
     )
-    _disp["Signal RSI"] = _disp["signal_rsi"].apply(
-        lambda v: f"{v:.1f}" if pd.notna(v) else "—"
-    )
+    _disp["Signal RSI"] = _disp["signal_rsi"].apply(lambda v: f"{v:.1f}" if pd.notna(v) else "—")
     _disp["Signal Price"] = _disp["signal_price"].apply(
         lambda v: f"${v:.2f}" if pd.notna(v) else "—"
     )
@@ -575,9 +778,19 @@ if not _desired_df.empty:
     _disp["Status"] = _disp["status"].map(_status_icon).fillna(_disp["status"])
 
     st.dataframe(
-        _disp[["symbol", "Desired", "Status", "Attempts", "Signal RSI", "Signal Price", "Since", "Last Try", "Last Error"]].rename(
-            columns={"symbol": "Symbol"}
-        ),
+        _disp[
+            [
+                "symbol",
+                "Desired",
+                "Status",
+                "Attempts",
+                "Signal RSI",
+                "Signal Price",
+                "Since",
+                "Last Try",
+                "Last Error",
+            ]
+        ].rename(columns={"symbol": "Symbol"}),
         use_container_width=True,
         hide_index=True,
     )
@@ -588,7 +801,7 @@ if not _desired_df.empty:
 st.subheader("Watchlist RSI Monitor")
 
 snap_df = load_symbol_snapshots()
-_oversold  = rc.oversold   if rc else cfg["strategy"].get("oversold", 30)
+_oversold = rc.oversold if rc else cfg["strategy"].get("oversold", 30)
 _overbought = rc.overbought if rc else cfg["strategy"].get("overbought", 70)
 
 if snap_df.empty:
@@ -616,28 +829,38 @@ else:
         labels.append(f"RSI {rsi_str}{sig_str}  {price_str}")
 
     fig_rsi = go.Figure()
-    fig_rsi.add_trace(go.Bar(
-        x=snap_df["rsi"].fillna(0),
-        y=snap_df["symbol"],
-        orientation="h",
-        marker_color=bar_colors,
-        text=labels,
-        textposition="outside",
-        cliponaxis=False,
-        hovertemplate="<b>%{y}</b><br>RSI: %{x:.1f}<extra></extra>",
-    ))
+    fig_rsi.add_trace(
+        go.Bar(
+            x=snap_df["rsi"].fillna(0),
+            y=snap_df["symbol"],
+            orientation="h",
+            marker_color=bar_colors,
+            text=labels,
+            textposition="outside",
+            cliponaxis=False,
+            hovertemplate="<b>%{y}</b><br>RSI: %{x:.1f}<extra></extra>",
+        )
+    )
 
     # Buy / sell threshold bands and lines
-    fig_rsi.add_vrect(x0=0, x1=_oversold,   fillcolor="#00C805", opacity=0.07, line_width=0)
+    fig_rsi.add_vrect(x0=0, x1=_oversold, fillcolor="#00C805", opacity=0.07, line_width=0)
     fig_rsi.add_vrect(x0=_overbought, x1=100, fillcolor="#FF5000", opacity=0.07, line_width=0)
     fig_rsi.add_vline(
-        x=_oversold, line_dash="dash", line_color="#00C805", line_width=1.5,
-        annotation_text=f"Buy < {_oversold}", annotation_position="top left",
+        x=_oversold,
+        line_dash="dash",
+        line_color="#00C805",
+        line_width=1.5,
+        annotation_text=f"Buy < {_oversold}",
+        annotation_position="top left",
         annotation_font_color="#00C805",
     )
     fig_rsi.add_vline(
-        x=_overbought, line_dash="dash", line_color="#FF5000", line_width=1.5,
-        annotation_text=f"Sell > {_overbought}", annotation_position="top right",
+        x=_overbought,
+        line_dash="dash",
+        line_color="#FF5000",
+        line_width=1.5,
+        annotation_text=f"Sell > {_overbought}",
+        annotation_position="top right",
         annotation_font_color="#FF5000",
     )
 
@@ -648,7 +871,7 @@ else:
     age_str = ""
     if snap_age is not None:
         age_secs = (datetime.now() - pd.Timestamp(snap_age)).total_seconds()
-        age_str = f" · data {int(age_secs/60)}m old" if age_secs < 3600 else ""
+        age_str = f" · data {int(age_secs / 60)}m old" if age_secs < 3600 else ""
 
     fig_rsi.update_layout(
         title=f"RSI(14) per Symbol{age_str}",
@@ -663,19 +886,19 @@ else:
 
     # Signal call-outs — reason text is strategy-aware
     active_strategy = rc.strategy if rc else "rsi_mean_reversion"
-    buys  = snap_df[snap_df["signal"] == "buy"]["symbol"].tolist()
+    buys = snap_df[snap_df["signal"] == "buy"]["symbol"].tolist()
     sells = snap_df[snap_df["signal"] == "sell"]["symbol"].tolist()
     _strategy_label = {
         "rsi_mean_reversion": f"RSI in oversold zone (< {_oversold})",
-        "macd_crossover":     "MACD histogram bullish crossover",
-        "bollinger_bands":    "price below lower Bollinger band",
-        "rsi_macd_combo":     f"RSI < {_oversold} + MACD bullish confirmation",
+        "macd_crossover": "MACD histogram bullish crossover",
+        "bollinger_bands": "price below lower Bollinger band",
+        "rsi_macd_combo": f"RSI < {_oversold} + MACD bullish confirmation",
     }.get(active_strategy, "signal triggered")
     _sell_label = {
         "rsi_mean_reversion": f"RSI in overbought zone (> {_overbought})",
-        "macd_crossover":     "MACD histogram bearish crossover",
-        "bollinger_bands":    "price above upper Bollinger band",
-        "rsi_macd_combo":     f"RSI > {_overbought} + MACD bearish confirmation",
+        "macd_crossover": "MACD histogram bearish crossover",
+        "bollinger_bands": "price above upper Bollinger band",
+        "rsi_macd_combo": f"RSI > {_overbought} + MACD bearish confirmation",
     }.get(active_strategy, "signal triggered")
     if buys:
         st.success(f"**Buy signal:** {', '.join(buys)} — {_strategy_label}")
@@ -686,7 +909,9 @@ else:
 
     # ── Strategy-specific second chart ────────────────────────────────────
     if active_strategy in ("macd_crossover", "rsi_macd_combo") and "macd_hist" in snap_df.columns:
-        macd_df = snap_df.dropna(subset=["macd_hist"]).sort_values("macd_hist").reset_index(drop=True)
+        macd_df = (
+            snap_df.dropna(subset=["macd_hist"]).sort_values("macd_hist").reset_index(drop=True)
+        )
         if not macd_df.empty:
             macd_colors = ["#00C805" if v >= 0 else "#FF5000" for v in macd_df["macd_hist"]]
             macd_labels = [
@@ -694,12 +919,18 @@ else:
                 for v in macd_df["macd_hist"]
             ]
             fig_macd = go.Figure()
-            fig_macd.add_trace(go.Bar(
-                x=macd_df["macd_hist"], y=macd_df["symbol"],
-                orientation="h", marker_color=macd_colors,
-                text=macd_labels, textposition="outside", cliponaxis=False,
-                hovertemplate="<b>%{y}</b><br>MACD hist: %{x:.4f}<extra></extra>",
-            ))
+            fig_macd.add_trace(
+                go.Bar(
+                    x=macd_df["macd_hist"],
+                    y=macd_df["symbol"],
+                    orientation="h",
+                    marker_color=macd_colors,
+                    text=macd_labels,
+                    textposition="outside",
+                    cliponaxis=False,
+                    hovertemplate="<b>%{y}</b><br>MACD hist: %{x:.4f}<extra></extra>",
+                )
+            )
             fig_macd.add_vline(x=0, line_color="#888888", line_width=1.5)
             max_abs = macd_df["macd_hist"].abs().max() * 1.5 or 0.5
             fig_macd.update_layout(
@@ -722,21 +953,39 @@ else:
             ]
             bb_labels = [f"{v:.1f}%" for v in bb_df["bb_pct_b"]]
             fig_bb = go.Figure()
-            fig_bb.add_trace(go.Bar(
-                x=bb_df["bb_pct_b"], y=bb_df["symbol"],
-                orientation="h", marker_color=bb_colors,
-                text=bb_labels, textposition="outside", cliponaxis=False,
-                hovertemplate="<b>%{y}</b><br>%%B: %{x:.1f}%%<extra></extra>",
-            ))
-            fig_bb.add_vrect(x0=-30, x1=0,   fillcolor="#00C805", opacity=0.07, line_width=0)
+            fig_bb.add_trace(
+                go.Bar(
+                    x=bb_df["bb_pct_b"],
+                    y=bb_df["symbol"],
+                    orientation="h",
+                    marker_color=bb_colors,
+                    text=bb_labels,
+                    textposition="outside",
+                    cliponaxis=False,
+                    hovertemplate="<b>%{y}</b><br>%%B: %{x:.1f}%%<extra></extra>",
+                )
+            )
+            fig_bb.add_vrect(x0=-30, x1=0, fillcolor="#00C805", opacity=0.07, line_width=0)
             fig_bb.add_vrect(x0=100, x1=130, fillcolor="#FF5000", opacity=0.07, line_width=0)
-            fig_bb.add_vline(x=0,   line_dash="dash", line_color="#00C805", line_width=1.5,
-                             annotation_text="Buy (below lower band)",
-                             annotation_position="top left", annotation_font_color="#00C805")
-            fig_bb.add_vline(x=50,  line_dash="dot", line_color="#555555", line_width=1, opacity=0.4)
-            fig_bb.add_vline(x=100, line_dash="dash", line_color="#FF5000", line_width=1.5,
-                             annotation_text="Sell (above upper band)",
-                             annotation_position="top right", annotation_font_color="#FF5000")
+            fig_bb.add_vline(
+                x=0,
+                line_dash="dash",
+                line_color="#00C805",
+                line_width=1.5,
+                annotation_text="Buy (below lower band)",
+                annotation_position="top left",
+                annotation_font_color="#00C805",
+            )
+            fig_bb.add_vline(x=50, line_dash="dot", line_color="#555555", line_width=1, opacity=0.4)
+            fig_bb.add_vline(
+                x=100,
+                line_dash="dash",
+                line_color="#FF5000",
+                line_width=1.5,
+                annotation_text="Sell (above upper band)",
+                annotation_position="top right",
+                annotation_font_color="#FF5000",
+            )
             fig_bb.update_layout(
                 title="Bollinger Bands %B  (0% = lower band · 50% = middle · 100% = upper band)",
                 xaxis=dict(range=[-30, 130], title="%B", tickvals=[0, 25, 50, 75, 100]),
@@ -755,8 +1004,16 @@ else:
     for _, _r in snap_df.iterrows():
         _sym = _r["symbol"]
         _rsi_v = float(_r["rsi"]) if pd.notna(_r.get("rsi")) else None
-        _macd_v = (float(_r["macd_hist"]) if "macd_hist" in snap_df.columns and pd.notna(_r.get("macd_hist")) else None)
-        _bb_v   = (float(_r["bb_pct_b"])  if "bb_pct_b"  in snap_df.columns and pd.notna(_r.get("bb_pct_b"))  else None)
+        _macd_v = (
+            float(_r["macd_hist"])
+            if "macd_hist" in snap_df.columns and pd.notna(_r.get("macd_hist"))
+            else None
+        )
+        _bb_v = (
+            float(_r["bb_pct_b"])
+            if "bb_pct_b" in snap_df.columns and pd.notna(_r.get("bb_pct_b"))
+            else None
+        )
 
         if _rsi_v is None:
             continue
@@ -779,7 +1036,9 @@ else:
                 _note = "RSI and MACD agree — **buy signal active**."
                 _ctype = "buy"
             elif _rsi_v <= _oversold and _macd_v < 0:
-                _note = f"Oversold but MACD still bearish — needs +{abs(_macd_v):.4f} to flip positive."
+                _note = (
+                    f"Oversold but MACD still bearish — needs +{abs(_macd_v):.4f} to flip positive."
+                )
                 _ctype = "conflict"
             elif _rsi_v >= _overbought and _macd_v < 0:
                 _note = "RSI and MACD agree — **sell signal active**."
@@ -806,7 +1065,7 @@ else:
                 _note = f"Near upper band (%B {_bb_v:.0f}%) — potential sell approaching."
                 _ctype = "watch"
             else:
-                _note = f"Within bands. No signal."
+                _note = "Within bands. No signal."
                 _ctype = "neutral"
             _body = f"**{_sym}** · {_rsi_txt} · %B {_bb_v:.0f}%\n\n{_note}"
 
@@ -822,8 +1081,16 @@ else:
                 _ctype = "neutral"
             _body = f"**{_sym}** · {_rsi_txt}\n\n{_note}"
 
-        _insight_cards.append({"sym": _sym, "type": _ctype, "body": _body,
-                                "rsi": _rsi_v, "macd": _macd_v, "bb": _bb_v})
+        _insight_cards.append(
+            {
+                "sym": _sym,
+                "type": _ctype,
+                "body": _body,
+                "rsi": _rsi_v,
+                "macd": _macd_v,
+                "bb": _bb_v,
+            }
+        )
 
     if _insight_cards:
         _ic = st.columns(3)
@@ -841,9 +1108,12 @@ else:
         # For MACD strategies: show which oversold stock is closest to a buy flip
         if active_strategy in ("macd_crossover", "rsi_macd_combo"):
             _flip_cands = [
-                c for c in _insight_cards
-                if c["rsi"] is not None and c["rsi"] <= _oversold
-                and c["macd"] is not None and c["macd"] < 0
+                c
+                for c in _insight_cards
+                if c["rsi"] is not None
+                and c["rsi"] <= _oversold
+                and c["macd"] is not None
+                and c["macd"] < 0
             ]
             if _flip_cands:
                 _nearest = min(_flip_cands, key=lambda c: abs(c["macd"]))
@@ -869,7 +1139,9 @@ with pv_btn:
 if "portfolio_refresh_at" in st.session_state:
     elapsed = (datetime.now(ET) - st.session_state["portfolio_refresh_at"]).total_seconds()
     if elapsed < 90:
-        st.info(f"Portfolio refresh requested — data will update within ~60 seconds ({elapsed:.0f}s elapsed).")
+        st.info(
+            f"Portfolio refresh requested — data will update within ~60 seconds ({elapsed:.0f}s elapsed)."
+        )
     else:
         del st.session_state["portfolio_refresh_at"]
 
@@ -880,7 +1152,11 @@ if not snapshots.empty:
     period_cols = st.columns(len(PERIOD_OPTIONS))
     selected_period = st.session_state.get("period", "1M")
     for i, (label, _) in enumerate(PERIOD_OPTIONS.items()):
-        if period_cols[i].button(label, type="primary" if label == selected_period else "secondary", use_container_width=True):
+        if period_cols[i].button(
+            label,
+            type="primary" if label == selected_period else "secondary",
+            use_container_width=True,
+        ):
             st.session_state["period"] = label
             selected_period = label
 
@@ -903,36 +1179,53 @@ if not snapshots.empty:
 
         pv1, pv2, pv3 = st.columns(3)
         pv1.metric("Current Equity", f"${last_equity:,.2f}")
-        pv2.metric(f"P&L ({selected_period})", f"${pnl:+,.2f}", delta=f"{pnl_pct:+.2f}%",
-                   delta_color="normal" if pnl >= 0 else "inverse")
+        pv2.metric(
+            f"P&L ({selected_period})",
+            f"${pnl:+,.2f}",
+            delta=f"{pnl_pct:+.2f}%",
+            delta_color="normal" if pnl >= 0 else "inverse",
+        )
         if not df_period["portfolio_value"].isna().all():
             pv3.metric("Positions Value", f"${df_period['portfolio_value'].iloc[-1]:,.2f}")
 
         # Equity chart
         fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=df_period["recorded_at"], y=df_period["equity"],
-            mode="lines", name="Equity",
-            line=dict(color="#00C805", width=2),
-            fill="tozeroy", fillcolor="rgba(0,200,5,0.08)",
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=df_period["recorded_at"],
+                y=df_period["equity"],
+                mode="lines",
+                name="Equity",
+                line=dict(color="#00C805", width=2),
+                fill="tozeroy",
+                fillcolor="rgba(0,200,5,0.08)",
+            )
+        )
         if not df_period["cash"].isna().all():
-            fig.add_trace(go.Scatter(
-                x=df_period["recorded_at"], y=df_period["cash"],
-                mode="lines", name="Cash",
-                line=dict(color="#636EFA", width=1, dash="dot"),
-            ))
+            fig.add_trace(
+                go.Scatter(
+                    x=df_period["recorded_at"],
+                    y=df_period["cash"],
+                    mode="lines",
+                    name="Cash",
+                    line=dict(color="#636EFA", width=1, dash="dot"),
+                )
+            )
         fig.update_layout(
             title=f"Account Equity — {selected_period}",
-            xaxis_title="", yaxis_title="USD",
-            hovermode="x unified", legend=dict(orientation="h"),
+            xaxis_title="",
+            yaxis_title="USD",
+            hovermode="x unified",
+            legend=dict(orientation="h"),
             margin=dict(l=0, r=0, t=40, b=0),
         )
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info(f"No portfolio data in the selected period ({selected_period}).")
 else:
-    st.info("No portfolio snapshots yet. Click **⟳ Refresh** to fetch the current balance, or wait for the next market-hours cycle.")
+    st.info(
+        "No portfolio snapshots yet. Click **⟳ Refresh** to fetch the current balance, or wait for the next market-hours cycle."
+    )
 
 st.divider()
 
@@ -943,26 +1236,40 @@ st.subheader("Tax Obligation (Realized Trades)")
 summary = load_tax_summary(short_rate, long_rate)
 
 c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Short-Term Gain", f"${summary.short_term_gain:,.2f}",
-          delta=f"{short_rate*100:.0f}% rate", delta_color="off")
+c1.metric(
+    "Short-Term Gain",
+    f"${summary.short_term_gain:,.2f}",
+    delta=f"{short_rate * 100:.0f}% rate",
+    delta_color="off",
+)
 c2.metric("Short-Term Tax", f"${summary.short_term_tax:,.2f}")
-c3.metric("Long-Term Gain", f"${summary.long_term_gain:,.2f}",
-          delta=f"{long_rate*100:.0f}% rate", delta_color="off")
+c3.metric(
+    "Long-Term Gain",
+    f"${summary.long_term_gain:,.2f}",
+    delta=f"{long_rate * 100:.0f}% rate",
+    delta_color="off",
+)
 c4.metric("Long-Term Tax", f"${summary.long_term_tax:,.2f}")
-c5.metric("Total Estimated Tax", f"${summary.total_tax:,.2f}",
-          delta=f"Net gain ${summary.short_term_gain + summary.long_term_gain:,.2f}", delta_color="off")
+c5.metric(
+    "Total Estimated Tax",
+    f"${summary.total_tax:,.2f}",
+    delta=f"Net gain ${summary.short_term_gain + summary.long_term_gain:,.2f}",
+    delta_color="off",
+)
 
 if summary.by_symbol:
     rows = []
     for sym, gains in summary.by_symbol.items():
         st_g, lt_g = gains["short_term"], gains["long_term"]
-        rows.append({
-            "Symbol": sym,
-            "Short-Term Gain": f"${st_g:,.2f}",
-            "ST Tax": f"${st_g * short_rate:,.2f}",
-            "Long-Term Gain": f"${lt_g:,.2f}",
-            "LT Tax": f"${lt_g * long_rate:,.2f}",
-        })
+        rows.append(
+            {
+                "Symbol": sym,
+                "Short-Term Gain": f"${st_g:,.2f}",
+                "ST Tax": f"${st_g * short_rate:,.2f}",
+                "Long-Term Gain": f"${lt_g:,.2f}",
+                "LT Tax": f"${lt_g * long_rate:,.2f}",
+            }
+        )
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 st.divider()
@@ -973,9 +1280,11 @@ st.subheader("Trade History")
 df = load_trades()
 
 if df.empty:
-    st.info("No trades recorded yet. The bot is running — trades will appear after market open (Mon–Fri 9:30–16:00 ET).")
+    st.info(
+        "No trades recorded yet. The bot is running — trades will appear after market open (Mon–Fri 9:30–16:00 ET)."
+    )
 else:
-    buys  = df[df["side"] == "buy"]
+    buys = df[df["side"] == "buy"]
     sells = df[df["side"] == "sell"]
     total_pnl = df["realized_pnl"].sum()
 
@@ -983,36 +1292,67 @@ else:
     m1.metric("Total Trades", len(df))
     m2.metric("Buys", len(buys))
     m3.metric("Sells", len(sells))
-    m4.metric("Total Realized P&L", f"${total_pnl:,.2f}",
-              delta_color="normal" if total_pnl >= 0 else "inverse")
+    m4.metric(
+        "Total Realized P&L",
+        f"${total_pnl:,.2f}",
+        delta_color="normal" if total_pnl >= 0 else "inverse",
+    )
 
     sell_df = df[df["side"] == "sell"].copy()
     if not sell_df.empty:
         sell_df = sell_df.sort_values("executed_at")
         sell_df["cumulative_pnl"] = sell_df["realized_pnl"].cumsum()
-        fig = px.line(sell_df, x="executed_at", y="cumulative_pnl",
-                      title="Cumulative Realized P&L",
-                      labels={"executed_at": "Date", "cumulative_pnl": "P&L ($)"},
-                      color_discrete_sequence=["#00C805"])
+        fig = px.line(
+            sell_df,
+            x="executed_at",
+            y="cumulative_pnl",
+            title="Cumulative Realized P&L",
+            labels={"executed_at": "Date", "cumulative_pnl": "P&L ($)"},
+            color_discrete_sequence=["#00C805"],
+        )
         fig.add_hline(y=0, line_dash="dash", line_color="gray")
         st.plotly_chart(fig, use_container_width=True)
 
         sym_pnl = sell_df.groupby("symbol")["realized_pnl"].sum().reset_index()
         sym_pnl.columns = ["Symbol", "Realized P&L"]
-        fig2 = px.bar(sym_pnl, x="Symbol", y="Realized P&L", title="Realized P&L by Symbol",
-                      color="Realized P&L", color_continuous_scale=["#FF5000", "#00C805"])
+        fig2 = px.bar(
+            sym_pnl,
+            x="Symbol",
+            y="Realized P&L",
+            title="Realized P&L by Symbol",
+            color="Realized P&L",
+            color_continuous_scale=["#FF5000", "#00C805"],
+        )
         st.plotly_chart(fig2, use_container_width=True)
 
-    display_cols = ["executed_at", "symbol", "side", "quantity", "price",
-                    "dollar_amount", "rsi_at_signal", "realized_pnl", "order_id"]
+    display_cols = [
+        "executed_at",
+        "symbol",
+        "side",
+        "quantity",
+        "price",
+        "dollar_amount",
+        "rsi_at_signal",
+        "realized_pnl",
+        "order_id",
+    ]
     available = [c for c in display_cols if c in df.columns]
     st.dataframe(
-        df[available].rename(columns={
-            "executed_at": "Time", "symbol": "Symbol", "side": "Side",
-            "quantity": "Qty", "price": "Price", "dollar_amount": "Amount $",
-            "rsi_at_signal": "RSI", "realized_pnl": "P&L $", "order_id": "Order ID",
-        }),
-        use_container_width=True, hide_index=True,
+        df[available].rename(
+            columns={
+                "executed_at": "Time",
+                "symbol": "Symbol",
+                "side": "Side",
+                "quantity": "Qty",
+                "price": "Price",
+                "dollar_amount": "Amount $",
+                "rsi_at_signal": "RSI",
+                "realized_pnl": "P&L $",
+                "order_id": "Order ID",
+            }
+        ),
+        use_container_width=True,
+        hide_index=True,
     )
 
 st.divider()
@@ -1035,8 +1375,14 @@ with btn_col:
             st.rerun()
 
 if ctrl.paused:
-    paused_str = f" since {_to_local(ctrl.paused_at).strftime(f'%b %d %H:%M {_TZ_ABBR}')}" if ctrl.paused_at else ""
-    st.warning(f"Trading is **PAUSED**{paused_str}. The bot is running but will not place any orders. Click **Resume** to re-enable.")
+    paused_str = (
+        f" since {_to_local(ctrl.paused_at).strftime(f'%b %d %H:%M {_TZ_ABBR}')}"
+        if ctrl.paused_at
+        else ""
+    )
+    st.warning(
+        f"Trading is **PAUSED**{paused_str}. The bot is running but will not place any orders. Click **Resume** to re-enable."
+    )
 
 status = load_bot_status()
 now_et = datetime.now(ET).replace(tzinfo=None)
@@ -1045,9 +1391,14 @@ s1, s2, s3, s4 = st.columns(4)
 
 if status and status.last_cycle_at:
     age_mins = (now_et - status.last_cycle_at).total_seconds() / 60
-    cycle_label = f"{age_mins:.0f}m ago" if age_mins < 60 else f"{age_mins/60:.1f}h ago"
+    cycle_label = f"{age_mins:.0f}m ago" if age_mins < 60 else f"{age_mins / 60:.1f}h ago"
     cycle_ok = age_mins < 20
-    s1.metric("Last Cycle", cycle_label, delta="live" if cycle_ok else "stale", delta_color="normal" if cycle_ok else "inverse")
+    s1.metric(
+        "Last Cycle",
+        cycle_label,
+        delta="live" if cycle_ok else "stale",
+        delta_color="normal" if cycle_ok else "inverse",
+    )
 else:
     s1.metric("Last Cycle", "No data", delta="bot not running?", delta_color="inverse")
 
@@ -1057,13 +1408,16 @@ if status and status.token_expires_at:
     if days_left > 1:
         token_label = f"{days_left:.1f}d"
     elif days_left > 0:
-        token_label = f"{time_left.total_seconds()/3600:.1f}h"
+        token_label = f"{time_left.total_seconds() / 3600:.1f}h"
     else:
         token_label = "EXPIRED"
     token_ok = days_left > 1
-    s2.metric("Token Expires In", token_label,
-              delta="valid" if token_ok else "needs refresh",
-              delta_color="normal" if token_ok else "inverse")
+    s2.metric(
+        "Token Expires In",
+        token_label,
+        delta="valid" if token_ok else "needs refresh",
+        delta_color="normal" if token_ok else "inverse",
+    )
     if status.token_saved_at:
         issued_local = _to_local(status.token_saved_at)
         s3.metric("Token Issued", issued_local.strftime(f"%b %d %H:%M {_TZ_ABBR}"))
@@ -1079,7 +1433,9 @@ else:
 if status and status.token_expires_at:
     days_left = (status.token_expires_at - now_et).total_seconds() / 86400
     if days_left < 1:
-        st.error(f"⚠ OAuth token expired or expiring soon ({days_left:.1f} days). Run: `uv run inv auth && uv run inv k8s-seal && kubectl apply -f k8s/sealed/ && uv run inv k8s-restart`")
+        st.error(
+            f"⚠ OAuth token expired or expiring soon ({days_left:.1f} days). Run: `uv run inv auth && uv run inv k8s-seal && kubectl apply -f k8s/sealed/ && uv run inv k8s-restart`"
+        )
     elif days_left < 3:
         st.warning(f"OAuth token expires in {days_left:.1f} days. Consider re-authenticating soon.")
 

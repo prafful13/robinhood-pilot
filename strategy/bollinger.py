@@ -27,7 +27,9 @@ class BollingerBands(Strategy):
             for sym in self.watchlist
         }
 
-        historicals = await broker.get_historicals(self.watchlist, self.bar_interval, self.lookback_days)
+        historicals = await broker.get_historicals(
+            self.watchlist, self.bar_interval, self.lookback_days
+        )
         quotes = await broker.get_quotes(self.watchlist)
 
         for symbol in self.watchlist:
@@ -35,9 +37,11 @@ class BollingerBands(Strategy):
             if not bars:
                 continue
 
-            closes = pd.to_numeric(
-                pd.Series([b["close_price"] for b in bars]), errors="coerce"
-            ).dropna().reset_index(drop=True)
+            closes = (
+                pd.to_numeric(pd.Series([b["close_price"] for b in bars]), errors="coerce")
+                .dropna()
+                .reset_index(drop=True)
+            )
 
             price = float(quotes.get(symbol, {}).get("last_trade_price") or 0)
             rsi_val = Strategy._rsi(closes, 14)
@@ -48,7 +52,9 @@ class BollingerBands(Strategy):
                 self.last_metrics[symbol]["price"] = price
 
             if len(closes) < self.period + 2:
-                log.warning("%s: only %d bars for BB, need %d", symbol, len(closes), self.period + 2)
+                log.warning(
+                    "%s: only %d bars for BB, need %d", symbol, len(closes), self.period + 2
+                )
                 continue
 
             middle = closes.rolling(self.period).mean()
@@ -70,13 +76,27 @@ class BollingerBands(Strategy):
             if price < lower:
                 sig = "buy"
                 band_pos = (price - float(middle.iloc[-1])) / ((upper - lower) / 2)
-                signals.append(Signal(symbol=symbol, side="buy", price=price, rsi=band_pos,
-                                      reason=f"${price:.2f} < lower band ${lower:.2f} (%B={pct_b:.1f})"))
+                signals.append(
+                    Signal(
+                        symbol=symbol,
+                        side="buy",
+                        price=price,
+                        rsi=band_pos,
+                        reason=f"${price:.2f} < lower band ${lower:.2f} (%B={pct_b:.1f})",
+                    )
+                )
             elif price > upper:
                 sig = "sell"
                 band_pos = (price - float(middle.iloc[-1])) / ((upper - lower) / 2)
-                signals.append(Signal(symbol=symbol, side="sell", price=price, rsi=band_pos,
-                                      reason=f"${price:.2f} > upper band ${upper:.2f} (%B={pct_b:.1f})"))
+                signals.append(
+                    Signal(
+                        symbol=symbol,
+                        side="sell",
+                        price=price,
+                        rsi=band_pos,
+                        reason=f"${price:.2f} > upper band ${upper:.2f} (%B={pct_b:.1f})",
+                    )
+                )
             self.last_metrics[symbol]["signal"] = sig
 
         return signals

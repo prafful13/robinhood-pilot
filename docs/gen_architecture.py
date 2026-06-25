@@ -12,7 +12,7 @@ from diagrams.k8s.compute import Deploy
 from diagrams.k8s.storage import PVC
 from diagrams.k8s.network import SVC
 from diagrams.k8s.others import CRD
-from diagrams.onprem.client import Client, User
+from diagrams.onprem.client import Client
 from diagrams.onprem.database import PostgreSQL
 from diagrams.onprem.network import Internet
 

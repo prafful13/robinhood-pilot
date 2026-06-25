@@ -28,7 +28,9 @@ class MACDCrossover(Strategy):
             for sym in self.watchlist
         }
 
-        historicals = await broker.get_historicals(self.watchlist, self.bar_interval, self.lookback_days)
+        historicals = await broker.get_historicals(
+            self.watchlist, self.bar_interval, self.lookback_days
+        )
         quotes = await broker.get_quotes(self.watchlist)
         min_bars = self.slow + self.signal_period + 2
 
@@ -37,9 +39,11 @@ class MACDCrossover(Strategy):
             if not bars:
                 continue
 
-            closes = pd.to_numeric(
-                pd.Series([b["close_price"] for b in bars]), errors="coerce"
-            ).dropna().reset_index(drop=True)
+            closes = (
+                pd.to_numeric(pd.Series([b["close_price"] for b in bars]), errors="coerce")
+                .dropna()
+                .reset_index(drop=True)
+            )
 
             price = float(quotes.get(symbol, {}).get("last_trade_price") or 0)
             rsi_val = Strategy._rsi(closes, 14)
@@ -69,12 +73,26 @@ class MACDCrossover(Strategy):
             sig: str | None = None
             if prev_h < 0 and curr_h > 0:
                 sig = "buy"
-                signals.append(Signal(symbol=symbol, side="buy", price=price, rsi=rsi_val or 0.0,
-                                      reason=f"MACD bullish crossover hist={curr_h:.4f}"))
+                signals.append(
+                    Signal(
+                        symbol=symbol,
+                        side="buy",
+                        price=price,
+                        rsi=rsi_val or 0.0,
+                        reason=f"MACD bullish crossover hist={curr_h:.4f}",
+                    )
+                )
             elif prev_h > 0 and curr_h < 0:
                 sig = "sell"
-                signals.append(Signal(symbol=symbol, side="sell", price=price, rsi=rsi_val or 0.0,
-                                      reason=f"MACD bearish crossover hist={curr_h:.4f}"))
+                signals.append(
+                    Signal(
+                        symbol=symbol,
+                        side="sell",
+                        price=price,
+                        rsi=rsi_val or 0.0,
+                        reason=f"MACD bearish crossover hist={curr_h:.4f}",
+                    )
+                )
             self.last_metrics[symbol]["signal"] = sig
 
         return signals

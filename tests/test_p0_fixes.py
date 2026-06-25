@@ -23,8 +23,13 @@ class TestTokenRefreshInCluster:
         with (
             patch("broker.oauth._load_tokens", return_value=expired_tokens),
             patch("broker.oauth._is_expired", return_value=True),
-            patch("broker.oauth._discover_token_url", new=AsyncMock(return_value="https://token.url")),
-            patch("broker.oauth._refresh_access_token", new=AsyncMock(side_effect=Exception("network error"))),
+            patch(
+                "broker.oauth._discover_token_url", new=AsyncMock(return_value="https://token.url")
+            ),
+            patch(
+                "broker.oauth._refresh_access_token",
+                new=AsyncMock(side_effect=Exception("network error")),
+            ),
             patch.dict(os.environ, {"KUBERNETES_SERVICE_HOST": "10.0.0.1"}),
         ):
             with pytest.raises(RuntimeError, match="token refresh failed in k8s pod"):
@@ -42,28 +47,44 @@ class TestTokenRefreshInCluster:
             "saved_at": 0,
         }
 
-        pkce_tokens = {"access_token": "new", "refresh_token": "rt2", "expires_in": 3600, "saved_at": 9e9}
+        pkce_tokens = {
+            "access_token": "new",
+            "refresh_token": "rt2",
+            "expires_in": 3600,
+            "saved_at": 9e9,
+        }
 
         with (
             patch("broker.oauth._load_tokens", return_value=expired_tokens),
             patch("broker.oauth._is_expired", return_value=True),
-            patch("broker.oauth._discover_token_url", new=AsyncMock(return_value="https://token.url")),
-            patch("broker.oauth._refresh_access_token", new=AsyncMock(side_effect=Exception("network error"))),
+            patch(
+                "broker.oauth._discover_token_url", new=AsyncMock(return_value="https://token.url")
+            ),
+            patch(
+                "broker.oauth._refresh_access_token",
+                new=AsyncMock(side_effect=Exception("network error")),
+            ),
             patch("broker.oauth._generate_pkce", return_value=("verifier", "challenge")),
             patch("broker.oauth.secrets.token_urlsafe", return_value="state123"),
             patch("broker.oauth.webbrowser.open"),
-            patch("broker.oauth._run_callback_server", new=AsyncMock(return_value=("code", "state123"))),
+            patch(
+                "broker.oauth._run_callback_server",
+                new=AsyncMock(return_value=("code", "state123")),
+            ),
             patch("broker.oauth._exchange_code", new=AsyncMock(return_value=pkce_tokens)),
             patch("broker.oauth._save_tokens"),
             patch.dict(os.environ, {}, clear=True),  # no KUBERNETES_SERVICE_HOST
         ):
-            token = await get_access_token({
-                "resource": "r", "token_url": "t",
-                "auth_url": "https://auth.url",
-                "redirect_uri": "http://localhost:3118/callback",
-                "scope": "trading",
-                "client_id": "test-client",
-            })
+            token = await get_access_token(
+                {
+                    "resource": "r",
+                    "token_url": "t",
+                    "auth_url": "https://auth.url",
+                    "redirect_uri": "http://localhost:3118/callback",
+                    "scope": "trading",
+                    "client_id": "test-client",
+                }
+            )
 
         assert token == "new"
 
@@ -93,7 +114,9 @@ class TestTradePriceGuard:
     def _make_broker(self, live_price: float | None = 150.0) -> MagicMock:
         broker = MagicMock()
         if live_price is not None:
-            broker.get_quotes = AsyncMock(return_value={"AAPL": {"last_trade_price": str(live_price)}})
+            broker.get_quotes = AsyncMock(
+                return_value={"AAPL": {"last_trade_price": str(live_price)}}
+            )
         else:
             broker.get_quotes = AsyncMock(return_value={})
         broker.review_order = AsyncMock()
@@ -104,6 +127,7 @@ class TestTradePriceGuard:
 
     def _make_pending(self, signal_price: float | None, side: str = "buy") -> MagicMock:
         from db.models import DesiredPosition
+
         dp = MagicMock(spec=DesiredPosition)
         dp.id = 1
         dp.symbol = "AAPL"
@@ -136,9 +160,11 @@ class TestTradePriceGuard:
             patch.object(main, "SessionLocal", self._patch_session(main, dp)),
             patch.object(main, "_update_desired"),
             patch.object(main, "record_trade", side_effect=lambda **kw: recorded.append(kw)),
-            patch.object(main, "_place_order_with_retry", new=AsyncMock(
-                return_value={"data": {"order": {"id": "ord-1"}}}
-            )),
+            patch.object(
+                main,
+                "_place_order_with_retry",
+                new=AsyncMock(return_value={"data": {"order": {"id": "ord-1"}}}),
+            ),
         ):
             risk = MagicMock()
             risk.can_buy.return_value = (True, "")
@@ -162,9 +188,11 @@ class TestTradePriceGuard:
             patch.object(main, "SessionLocal", self._patch_session(main, dp)),
             patch.object(main, "_update_desired"),
             patch.object(main, "record_trade", side_effect=lambda **kw: recorded.append(kw)),
-            patch.object(main, "_place_order_with_retry", new=AsyncMock(
-                return_value={"data": {"order": {"id": "ord-1"}}}
-            )),
+            patch.object(
+                main,
+                "_place_order_with_retry",
+                new=AsyncMock(return_value={"data": {"order": {"id": "ord-1"}}}),
+            ),
         ):
             risk = MagicMock()
             risk.can_buy.return_value = (True, "")
@@ -188,9 +216,11 @@ class TestTradePriceGuard:
             patch.object(main, "SessionLocal", self._patch_session(main, dp)),
             patch.object(main, "_update_desired", side_effect=lambda id, **kw: updated.append(kw)),
             patch.object(main, "record_trade", side_effect=lambda **kw: recorded.append(kw)),
-            patch.object(main, "_place_order_with_retry", new=AsyncMock(
-                return_value={"data": {"order": {"id": "ord-1"}}}
-            )),
+            patch.object(
+                main,
+                "_place_order_with_retry",
+                new=AsyncMock(return_value={"data": {"order": {"id": "ord-1"}}}),
+            ),
         ):
             risk = MagicMock()
             risk.can_buy.return_value = (True, "")
@@ -198,4 +228,6 @@ class TestTradePriceGuard:
             await main._reconcile(broker, risk, "acc-1", [], MagicMock())
 
         assert recorded == [], "record_trade must not be called when live price unavailable"
-        assert any(u.get("status") == "achieved" for u in updated), "desired position must still be marked achieved"
+        assert any(u.get("status") == "achieved" for u in updated), (
+            "desired position must still be marked achieved"
+        )

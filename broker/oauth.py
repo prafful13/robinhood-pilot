@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 OAuth 2.0 PKCE flow for Robinhood MCP authentication.
 
@@ -39,6 +40,7 @@ def _get_client_id(cfg: dict) -> str:
     if not _is_in_cluster():
         try:
             from vault.keychain import get
+
             if cid := get(_CLIENT_ID_KEYCHAIN_KEY):
                 return cid
         except Exception:
@@ -154,6 +156,7 @@ def _load_tokens() -> dict | None:
         return None
     else:
         from vault.keychain import get
+
         value = get(KEYCHAIN_KEY)
         return json.loads(value) if value else None
 
@@ -165,6 +168,7 @@ def _save_tokens(tokens: dict) -> None:
         Path(token_file).write_text(json.dumps(tokens, indent=2))
     else:
         from vault.keychain import set as kc_set
+
         kc_set(KEYCHAIN_KEY, json.dumps(tokens))
 
 
@@ -183,7 +187,9 @@ async def get_access_token(cfg: dict) -> str:
 
     if tokens and tokens.get("refresh_token") and _is_expired(tokens):
         try:
-            fresh = await _refresh_access_token(token_url, _get_client_id(cfg), tokens["refresh_token"])
+            fresh = await _refresh_access_token(
+                token_url, _get_client_id(cfg), tokens["refresh_token"]
+            )
             _save_tokens(fresh)
             return fresh["access_token"]
         except Exception as exc:

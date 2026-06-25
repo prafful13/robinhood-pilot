@@ -15,10 +15,14 @@ class RiskManager:
     def _daily_realized_pnl(self) -> float:
         today = date.today()
         with SessionLocal() as db:
-            trades = db.query(Trade).filter(
-                Trade.side == "sell",
-                Trade.trade_date == today,
-            ).all()
+            trades = (
+                db.query(Trade)
+                .filter(
+                    Trade.side == "sell",
+                    Trade.trade_date == today,
+                )
+                .all()
+            )
         return sum(t.realized_pnl or 0.0 for t in trades)
 
     def held_symbols(self, positions: list[dict]) -> set[str]:

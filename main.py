@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 Trading bot main loop.
   - Runs every 15 minutes during market hours (9:30–16:00 ET, Mon–Fri)
@@ -21,8 +22,14 @@ import yaml
 from broker.robinhood import RobinhoodClient
 from db.database import SessionLocal, init_db, init_runtime_config
 from db.models import (
-    BotControl, BotStatus, DesiredPosition, Position, PortfolioSnapshot,
-    RuntimeConfig, SymbolSnapshot, Trade,
+    BotControl,
+    BotStatus,
+    DesiredPosition,
+    Position,
+    PortfolioSnapshot,
+    RuntimeConfig,
+    SymbolSnapshot,
+    Trade,
 )
 from risk.manager import RiskManager
 from strategy.base import Strategy
@@ -51,7 +58,7 @@ def _setup_logging() -> None:
         file_handler = TimedRotatingFileHandler(
             log_dir / "bot.log",
             when="midnight",
-            backupCount=100,   # keep ~100 daily files; 10Gi PVC is the hard cap
+            backupCount=100,  # keep ~100 daily files; 10Gi PVC is the hard cap
             encoding="utf-8",
             utc=True,
         )
@@ -95,26 +102,28 @@ def record_trade(
 ):
     now = datetime.now(ET)
     with SessionLocal() as db:
-        db.add(Trade(
-            symbol=symbol,
-            side=side,
-            quantity=quantity,
-            price=price,
-            dollar_amount=dollar_amount,
-            trade_date=now.date(),
-            executed_at=now,
-            order_id=order_id,
-            rsi_at_signal=rsi,
-            realized_pnl=realized_pnl,
-            holding_days=holding_days,
-            cost_basis=cost_basis,
-        ))
+        db.add(
+            Trade(
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                price=price,
+                dollar_amount=dollar_amount,
+                trade_date=now.date(),
+                executed_at=now,
+                order_id=order_id,
+                rsi_at_signal=rsi,
+                realized_pnl=realized_pnl,
+                holding_days=holding_days,
+                cost_basis=cost_basis,
+            )
+        )
         db.commit()
 
 
 _ORDER_MAX_RETRIES = 4
-_ORDER_BACKOFF_BASE = 5   # doubles each attempt: 5 → 10 → 20 → 40 s
-_MAX_CYCLE_RETRIES = 5    # give up after N full 15-min cycle attempts
+_ORDER_BACKOFF_BASE = 5  # doubles each attempt: 5 → 10 → 20 → 40 s
+_MAX_CYCLE_RETRIES = 5  # give up after N full 15-min cycle attempts
 
 
 async def _place_order_with_retry(place_fn, *args) -> dict:
@@ -125,8 +134,12 @@ async def _place_order_with_retry(place_fn, *args) -> dict:
             return result
         if attempt < _ORDER_MAX_RETRIES:
             delay = _ORDER_BACKOFF_BASE * (2 ** (attempt - 1))
-            log.warning("  order attempt %d/%d returned no data — retrying in %ds",
-                        attempt, _ORDER_MAX_RETRIES, delay)
+            log.warning(
+                "  order attempt %d/%d returned no data — retrying in %ds",
+                attempt,
+                _ORDER_MAX_RETRIES,
+                delay,
+            )
             await asyncio.sleep(delay)
     return {}
 
@@ -146,9 +159,8 @@ def _sync_desired_state(
 
     with SessionLocal() as db:
         for sig in signals:
-            already_achieved = (
-                (sig.side == "buy" and sig.symbol in held)
-                or (sig.side == "sell" and sig.symbol not in held)
+            already_achieved = (sig.side == "buy" and sig.symbol in held) or (
+                sig.side == "sell" and sig.symbol not in held
             )
             if already_achieved:
                 continue
@@ -173,23 +185,29 @@ def _sync_desired_state(
                         existing.signal_rsi = sig.rsi
                         existing.signal_price = sig.price
                         existing.created_at = now
-                        log.info(f"  desired {sig.side.upper()} {sig.symbol} reset (signal re-fired)")
+                        log.info(
+                            f"  desired {sig.side.upper()} {sig.symbol} reset (signal re-fired)"
+                        )
                     # else: same direction already pending, nothing to do
                     continue
                 else:
                     # Opposing signal — supersede old entry
                     existing.status = "superseded"
-                    log.info(f"  desired {existing.side.upper()} {sig.symbol} superseded by {sig.side.upper()} signal")
+                    log.info(
+                        f"  desired {existing.side.upper()} {sig.symbol} superseded by {sig.side.upper()} signal"
+                    )
 
-            db.add(DesiredPosition(
-                symbol=sig.symbol,
-                side=sig.side,
-                target_usd=max_trade_usd if sig.side == "buy" else None,
-                signal_rsi=sig.rsi,
-                signal_price=sig.price,
-                created_at=now,
-                status="pending",
-            ))
+            db.add(
+                DesiredPosition(
+                    symbol=sig.symbol,
+                    side=sig.side,
+                    target_usd=max_trade_usd if sig.side == "buy" else None,
+                    signal_rsi=sig.rsi,
+                    signal_price=sig.price,
+                    created_at=now,
+                    status="pending",
+                )
+            )
             log.info(f"  desired state: {sig.side.upper()} {sig.symbol}  RSI={sig.rsi:.1f}")
         db.commit()
 
@@ -239,29 +257,39 @@ async def _reconcile(
 
         # Cycle retry limit
         if retry_count >= _MAX_CYCLE_RETRIES:
-            _update_desired(d_id, status="failed", last_attempted_at=now,
-                            error_msg=f"exceeded {_MAX_CYCLE_RETRIES} cycle retries")
+            _update_desired(
+                d_id,
+                status="failed",
+                last_attempted_at=now,
+                error_msg=f"exceeded {_MAX_CYCLE_RETRIES} cycle retries",
+            )
             log.error(f"  ✗ desired {side.upper()} {symbol} FAILED — max cycle retries reached")
             continue
 
-        log.info(f"  attempting {side.upper()} {symbol}  (cycle {retry_count + 1}/{_MAX_CYCLE_RETRIES})")
+        log.info(
+            f"  attempting {side.upper()} {symbol}  (cycle {retry_count + 1}/{_MAX_CYCLE_RETRIES})"
+        )
 
         if side == "buy":
             ok, reason = risk.can_buy(symbol, positions)
             if not ok:
-                _update_desired(d_id, retry_count=retry_count + 1,
-                                last_attempted_at=now, error_msg=reason)
+                _update_desired(
+                    d_id, retry_count=retry_count + 1, last_attempted_at=now, error_msg=reason
+                )
                 log.info(f"  → risk blocked: {reason}")
                 continue
 
             dollar_str = f"{(target_usd or risk.max_trade_usd):.2f}"
             await broker.review_order(account, symbol, "buy", dollar_str)
-            result = await _place_order_with_retry(broker.place_buy_order, account, symbol, dollar_str)
+            result = await _place_order_with_retry(
+                broker.place_buy_order, account, symbol, dollar_str
+            )
 
             if not result:
                 msg = "order failed after in-cycle retries"
-                _update_desired(d_id, retry_count=retry_count + 1,
-                                last_attempted_at=now, error_msg=msg)
+                _update_desired(
+                    d_id, retry_count=retry_count + 1, last_attempted_at=now, error_msg=msg
+                )
                 log.error(f"  ✗ BUY {symbol} — {msg} (will retry next cycle)")
             else:
                 order_id = result.get("data", {}).get("order", {}).get("id")
@@ -272,25 +300,32 @@ async def _reconcile(
                     quotes = await broker.get_quotes([symbol])
                     price = float(quotes.get(symbol, {}).get("last_trade_price") or 0)
                     if not price:
-                        log.error(f"  ✗ BUY {symbol}: signal_price is None and live quote unavailable — trade not recorded")
-                        _update_desired(d_id, status="achieved", last_attempted_at=now, error_msg=None)
+                        log.error(
+                            f"  ✗ BUY {symbol}: signal_price is None and live quote unavailable — trade not recorded"
+                        )
+                        _update_desired(
+                            d_id, status="achieved", last_attempted_at=now, error_msg=None
+                        )
                         log.info(f"  ✓ BUY {symbol} achieved  order={order_id}")
                         continue
                 record_trade(
-                    symbol=symbol, side="buy",
+                    symbol=symbol,
+                    side="buy",
                     quantity=amt / price,
-                    price=price, dollar_amount=amt,
-                    order_id=order_id, rsi=signal_rsi,
+                    price=price,
+                    dollar_amount=amt,
+                    order_id=order_id,
+                    rsi=signal_rsi,
                 )
-                _update_desired(d_id, status="achieved",
-                                last_attempted_at=now, error_msg=None)
+                _update_desired(d_id, status="achieved", last_attempted_at=now, error_msg=None)
                 log.info(f"  ✓ BUY {symbol} achieved  order={order_id}")
 
         elif side == "sell":
             ok, reason = risk.can_sell(symbol, positions)
             if not ok:
-                _update_desired(d_id, retry_count=retry_count + 1,
-                                last_attempted_at=now, error_msg=reason)
+                _update_desired(
+                    d_id, retry_count=retry_count + 1, last_attempted_at=now, error_msg=reason
+                )
                 log.info(f"  → risk blocked: {reason}")
                 continue
 
@@ -299,12 +334,15 @@ async def _reconcile(
             avg_cost = float(position.get("average_buy_price", 0))
 
             await broker.review_sell_order(account, symbol, qty_str)
-            result = await _place_order_with_retry(broker.place_sell_order, account, symbol, qty_str)
+            result = await _place_order_with_retry(
+                broker.place_sell_order, account, symbol, qty_str
+            )
 
             if not result:
                 msg = "order failed after in-cycle retries"
-                _update_desired(d_id, retry_count=retry_count + 1,
-                                last_attempted_at=now, error_msg=msg)
+                _update_desired(
+                    d_id, retry_count=retry_count + 1, last_attempted_at=now, error_msg=msg
+                )
                 log.error(f"  ✗ SELL {symbol} — {msg} (will retry next cycle)")
             else:
                 order_id = result.get("data", {}).get("order", {}).get("id")
@@ -315,20 +353,26 @@ async def _reconcile(
                     quotes = await broker.get_quotes([symbol])
                     price = float(quotes.get(symbol, {}).get("last_trade_price") or 0)
                     if not price:
-                        log.error(f"  ✗ SELL {symbol}: signal_price is None and live quote unavailable — trade not recorded")
-                        _update_desired(d_id, status="achieved", last_attempted_at=now, error_msg=None)
+                        log.error(
+                            f"  ✗ SELL {symbol}: signal_price is None and live quote unavailable — trade not recorded"
+                        )
+                        _update_desired(
+                            d_id, status="achieved", last_attempted_at=now, error_msg=None
+                        )
                         log.info(f"  ✓ SELL {symbol} achieved  order={order_id}")
                         continue
                 record_trade(
-                    symbol=symbol, side="sell",
-                    quantity=qty, price=price,
+                    symbol=symbol,
+                    side="sell",
+                    quantity=qty,
+                    price=price,
                     dollar_amount=qty * price,
-                    order_id=order_id, rsi=signal_rsi,
+                    order_id=order_id,
+                    rsi=signal_rsi,
                     realized_pnl=qty * (price - avg_cost),
                     cost_basis=avg_cost,
                 )
-                _update_desired(d_id, status="achieved",
-                                last_attempted_at=now, error_msg=None)
+                _update_desired(d_id, status="achieved", last_attempted_at=now, error_msg=None)
                 log.info(f"  ✓ SELL {symbol} achieved  order={order_id}")
 
 
@@ -346,21 +390,31 @@ def _record_positions(positions: list[dict], now: datetime) -> None:
             held_since = None
             if "opened_at" in pos:
                 try:
-                    held_since = datetime.fromisoformat(pos["opened_at"].replace("Z", "+00:00")).replace(tzinfo=None)
+                    held_since = datetime.fromisoformat(
+                        pos["opened_at"].replace("Z", "+00:00")
+                    ).replace(tzinfo=None)
                 except (ValueError, AttributeError):
                     pass
-            db.add(Position(
-                symbol=symbol,
-                quantity=qty,
-                avg_cost=avg_cost,
-                current_price=current_price,
-                recorded_at=now,
-                held_since=held_since,
-            ))
+            db.add(
+                Position(
+                    symbol=symbol,
+                    quantity=qty,
+                    avg_cost=avg_cost,
+                    current_price=current_price,
+                    recorded_at=now,
+                    held_since=held_since,
+                )
+            )
         db.commit()
 
 
-async def run_cycle(broker: RobinhoodClient, strategy: Strategy, risk: RiskManager, account: str, token_data: dict | None = None):
+async def run_cycle(
+    broker: RobinhoodClient,
+    strategy: Strategy,
+    risk: RiskManager,
+    account: str,
+    token_data: dict | None = None,
+):
     log.info("── running strategy cycle ──")
     now = datetime.now(ET).replace(tzinfo=None)
 
@@ -374,7 +428,9 @@ async def run_cycle(broker: RobinhoodClient, strategy: Strategy, risk: RiskManag
     _record_symbol_snapshots(getattr(strategy, "last_metrics", {}), now)
 
     for sig in signals:
-        log.info(f"  signal: {sig.side.upper()} {sig.symbol}  RSI={sig.rsi:.1f}  price=${sig.price:.2f}")
+        log.info(
+            f"  signal: {sig.side.upper()} {sig.symbol}  RSI={sig.rsi:.1f}  price=${sig.price:.2f}"
+        )
     if not signals:
         log.info("  no new signals")
 
@@ -462,15 +518,17 @@ def _record_symbol_snapshots(metrics: dict, now: datetime) -> None:
         return
     with SessionLocal() as db:
         for sym, data in metrics.items():
-            db.add(SymbolSnapshot(
-                symbol=sym,
-                recorded_at=now,
-                rsi=data.get("rsi"),
-                price=data.get("price"),
-                signal=data.get("signal"),
-                macd_hist=data.get("macd_hist"),
-                bb_pct_b=data.get("bb_pct_b"),
-            ))
+            db.add(
+                SymbolSnapshot(
+                    symbol=sym,
+                    recorded_at=now,
+                    rsi=data.get("rsi"),
+                    price=data.get("price"),
+                    signal=data.get("signal"),
+                    macd_hist=data.get("macd_hist"),
+                    bb_pct_b=data.get("bb_pct_b"),
+                )
+            )
         db.commit()
 
 
@@ -480,12 +538,14 @@ def _record_portfolio(portfolio: dict, now: datetime) -> None:
     cash = float(portfolio.get("cash", 0) or 0)
     port_val = float(portfolio.get("equity_value", 0) or 0)
     with SessionLocal() as db:
-        db.add(PortfolioSnapshot(
-            recorded_at=now,
-            equity=equity,
-            cash=cash,
-            portfolio_value=port_val,
-        ))
+        db.add(
+            PortfolioSnapshot(
+                recorded_at=now,
+                equity=equity,
+                cash=cash,
+                portfolio_value=port_val,
+            )
+        )
         db.commit()
 
 
@@ -505,13 +565,15 @@ def _record_bot_status(token_data: dict | None, now: datetime, error: str | None
             existing.token_saved_at = token_saved_at
             existing.last_error = error
         else:
-            db.add(BotStatus(
-                id=1,
-                last_cycle_at=now,
-                token_expires_at=token_expires_at,
-                token_saved_at=token_saved_at,
-                last_error=error,
-            ))
+            db.add(
+                BotStatus(
+                    id=1,
+                    last_cycle_at=now,
+                    token_expires_at=token_expires_at,
+                    token_saved_at=token_saved_at,
+                    last_error=error,
+                )
+            )
         db.commit()
 
 
@@ -528,17 +590,23 @@ async def main():
         loop.add_signal_handler(
             sig,
             lambda s=sig: (
-                log.info(f"Received {signal.Signals(s).name} — finishing current cycle then exiting"),
+                log.info(
+                    f"Received {signal.Signals(s).name} — finishing current cycle then exiting"
+                ),
                 shutdown.set(),
             ),
         )
 
     log.info("Robinhood RSI trader starting up")
     log.info(f"Watchlist: {cfg['watchlist']}")
-    log.info(f"RSI thresholds: buy<{cfg['strategy']['oversold']}  sell>{cfg['strategy']['overbought']}")
-    log.info(f"Risk: max ${cfg['risk']['max_trade_usd']}/trade  "
-             f"max {cfg['risk']['max_positions']} positions  "
-             f"daily loss limit ${cfg['risk']['daily_loss_limit_usd']}")
+    log.info(
+        f"RSI thresholds: buy<{cfg['strategy']['oversold']}  sell>{cfg['strategy']['overbought']}"
+    )
+    log.info(
+        f"Risk: max ${cfg['risk']['max_trade_usd']}/trade  "
+        f"max {cfg['risk']['max_positions']} positions  "
+        f"daily loss limit ${cfg['risk']['daily_loss_limit_usd']}"
+    )
 
     async with RobinhoodClient(cfg) as broker:
         while not shutdown.is_set():
@@ -572,7 +640,7 @@ async def main():
                 try:
                     await asyncio.wait_for(shutdown.wait(), timeout=min(60, remaining))
                     break
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     remaining -= 60
                     _touch_heartbeat()
                     await _maybe_refresh_portfolio(broker, account)

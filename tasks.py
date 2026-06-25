@@ -5,7 +5,7 @@ Usage:
     inv <task>           # with venv activated
 
 Secrets:    keychain-set, keychain-get, secrets-init, k8s-seal
-Local dev:  auth, bot, dashboard, build, lock-update
+Local dev:  auth, bot, dashboard, build, lock-update, lock-audit
 Security:   scan, scan-bandit, scan-truffleHog, scan-checkov
 Postgres:   k8s-psql  (provisioned externally via k3s-dev)
 Containers: docker-build, k8s-apply, k8s-status, k8s-logs, k8s-stop, k8s-start, k8s-restart, k8s-delete
@@ -47,10 +47,12 @@ SCAN_DIR = PROJECT / ".security-scans"
 
 # ── Keychain helpers ─────────────────────────────────────────────────────────
 
+
 @task(name="keychain-set")
 def keychain_set(c, key, value):
     """Store a secret in macOS Keychain: inv keychain-set <key> <value>"""
     from vault.keychain import set as kc_set
+
     kc_set(key, value)
     print(f"✓ '{key}' stored in Keychain (service=robinhood-trader)")
 
@@ -59,6 +61,7 @@ def keychain_set(c, key, value):
 def keychain_get(c, key):
     """Print a secret from macOS Keychain: inv keychain-get <key>"""
     from vault.keychain import get
+
     val = get(key)
     if val:
         print(f"{key}: {val}")
@@ -88,21 +91,23 @@ def secrets_init(c):
 
 # ── OAuth ────────────────────────────────────────────────────────────────────
 
+
 @task
 def auth(c):
     """Run the OAuth browser flow. Token is saved to macOS Keychain."""
     c.run(
-        f"{VENV_PYTHON} -c \""
+        f'{VENV_PYTHON} -c "'
         "import asyncio, yaml; "
         "from broker.oauth import get_access_token; "
         "cfg = yaml.safe_load(open('config.yaml'))['broker']; "
         "token = asyncio.run(get_access_token(cfg)); "
         "print('Token obtained, length:', len(token))"
-        "\""
+        '"'
     )
 
 
 # ── Sealed Secrets ────────────────────────────────────────────────────────────
+
 
 def _seal_secret(name: str, data: dict[str, str]) -> None:
     """Seal a k8s Secret from plain-text data dict → k8s/sealed/<name>.yaml"""
@@ -156,11 +161,69 @@ def k8s_seal(c):
     print("  kubectl apply -f k8s/sealed/")
 
 
+# ── Dependency management ─────────────────────────────────────────────────────
+
+
+@task(name="lock-update")
+def lock_update(c):
+    """Regenerate requirements.lock with hashes from uv.lock (run after adding deps).
+
+    Hashes are required so that pip install --require-hashes can verify package
+    integrity at install time, closing the supply-chain gap identified in issue #70.
+    The uv.lock file remains the primary lockfile; requirements.lock is derived for
+    environments that use plain pip (e.g. Docker image builds without uv).
+    """
+    c.run(
+        "uv export --no-dev --format requirements-txt --generate-hashes "
+        f"--output-file {PROJECT / 'requirements.lock'}"
+    )
+    print(
+        "✓ requirements.lock updated with hashes — commit both pyproject.toml and requirements.lock"
+    )
+
+
+@task(name="lock-audit")
+def lock_audit(c):
+    """Run pip-audit against the locked dependency set to detect known CVEs.
+
+    pip-audit queries the OSV (Open Source Vulnerabilities) database for every
+    package in the resolved dependency tree.  Exit code is non-zero when any
+    vulnerability is found, which makes this suitable as a CI gate.
+
+    The audit reads directly from requirements.lock so the scan matches exactly
+    what will be installed in production.  Run lock-update first if the lockfile
+    is stale.
+    """
+    lock_file = PROJECT / "requirements.lock"
+    if not lock_file.exists():
+        raise RuntimeError("requirements.lock not found — run 'uv run inv lock-update' first")
+
+    result = c.run(
+        f"pip-audit -r {lock_file} --progress-spinner off",
+        warn=True,
+    )
+
+    if result is None:
+        raise RuntimeError(
+            "pip-audit produced no result — it may not be installed. "
+            "Add pip-audit to [dependency-groups.dev] and run 'uv sync --all-groups'."
+        )
+
+    if result.return_code != 0:
+        raise RuntimeError(
+            "pip-audit found vulnerabilities or failed — see output above. "
+            "Update affected packages in pyproject.toml and regenerate requirements.lock."
+        )
+
+    print("✓ pip-audit: no known vulnerabilities in requirements.lock")
+
+
 # ── Security scanning ────────────────────────────────────────────────────────
+
 
 def _validate_scanner_output(tool_name: str, output: str, must_contain: list[str] = None) -> None:
     """Validate that scanner produced non-empty, structured output.
-    
+
     Raises RuntimeError if output is empty or lacks expected markers.
     """
     if not output or not output.strip():
@@ -168,7 +231,7 @@ def _validate_scanner_output(tool_name: str, output: str, must_contain: list[str
             f"{tool_name} produced empty output — likely execution failure, "
             "wrong target path, or output dropped. See task logs above for details."
         )
-    
+
     if must_contain:
         for marker in must_contain:
             if marker not in output:
@@ -181,28 +244,28 @@ def _validate_scanner_output(tool_name: str, output: str, must_contain: list[str
 @task(name="scan-bandit")
 def scan_bandit(c):
     """Run Bandit security scanner with verbose output and validation.
-    
+
     Bandit scans for common security issues in Python code.
     Fail-safe: rejects empty output and validates JSON schema completion.
     """
     SCAN_DIR.mkdir(parents=True, exist_ok=True)
     out_file = SCAN_DIR / "bandit.json"
-    
-    result = c.run(
+
+    c.run(
         f"bandit -r {PROJECT} -f json -o {out_file} -v 2>&1",
         warn=True,
     )
-    
+
     if not out_file.exists():
         raise RuntimeError("Bandit failed to create output file — execution likely failed")
-    
+
     output = out_file.read_text()
     _validate_scanner_output("Bandit", output, must_contain=["results", "metrics"])
-    
+
     try:
         data = json.loads(output)
-        metrics = data.get("metrics", {})
-        total_issues = sum(metrics.values()) if isinstance(metrics, dict) else 0
+        totals = data.get("metrics", {}).get("_totals", {})
+        total_issues = sum(v for v in totals.values() if isinstance(v, (int, float)))
         print(f"✓ Bandit scan complete: {total_issues} issues found")
         print(f"  Output: {out_file}")
     except json.JSONDecodeError as e:
@@ -212,26 +275,28 @@ def scan_bandit(c):
 @task(name="scan-truffleHog")
 def scan_trufflehog(c):
     """Run TruffleHog to detect leaked secrets with validation.
-    
+
     TruffleHog scans for high-entropy strings and known secret patterns.
     Fail-safe: rejects empty output and validates JSON line completion.
     """
     SCAN_DIR.mkdir(parents=True, exist_ok=True)
     out_file = SCAN_DIR / "trufflehog.json"
-    
-    result = c.run(
+
+    c.run(
         f"truffleHog filesystem {PROJECT} --json > {out_file} 2>&1",
         warn=True,
     )
-    
+
     if not out_file.exists():
         raise RuntimeError("TruffleHog failed to create output file — execution likely failed")
-    
+
     output = out_file.read_text()
     _validate_scanner_output("TruffleHog", output, must_contain=["Filesystem scan"])
-    
-    lines = output.strip().split('\n')
-    detected_count = len([l for l in lines if l.strip() and l.strip() != "Filesystem scan complete"])
+
+    lines = output.strip().split("\n")
+    detected_count = len(
+        [ln for ln in lines if ln.strip() and ln.strip() != "Filesystem scan complete"]
+    )
     print(f"✓ TruffleHog scan complete: {detected_count} potential secrets checked")
     print(f"  Output: {out_file}")
 
@@ -239,24 +304,24 @@ def scan_trufflehog(c):
 @task(name="scan-checkov")
 def scan_checkov(c):
     """Run Checkov to validate IaC and config files with validation.
-    
+
     Checkov scans Kubernetes manifests, Dockerfiles, and config files.
     Fail-safe: rejects empty output and validates JSON schema completion.
     """
     SCAN_DIR.mkdir(parents=True, exist_ok=True)
     out_file = SCAN_DIR / "checkov.json"
-    
-    result = c.run(
+
+    c.run(
         f"checkov -d {PROJECT} -o json --quiet > {out_file} 2>&1",
         warn=True,
     )
-    
+
     if not out_file.exists():
         raise RuntimeError("Checkov failed to create output file — execution likely failed")
-    
+
     output = out_file.read_text()
     _validate_scanner_output("Checkov", output, must_contain=["check_type", "summary"])
-    
+
     try:
         data = json.loads(output)
         summary = data.get("summary", {})
@@ -272,47 +337,48 @@ def scan_checkov(c):
 @task(name="scan")
 def scan(c):
     """Run all security scanners (Bandit, TruffleHog, Checkov) with integrity validation.
-    
+
     Fail-safe: Rejects empty output from any scanner and validates structured output.
     All results saved to .security-scans/ directory.
     """
     print("Running security scanners with integrity validation...\n")
-    
+
     errors = []
-    
+
     print("1/3 Running Bandit...")
     try:
         scan_bandit(c)
     except RuntimeError as e:
         errors.append(f"Bandit: {e}")
         print(f"  ✗ {e}")
-    
+
     print("\n2/3 Running TruffleHog...")
     try:
         scan_trufflehog(c)
     except RuntimeError as e:
         errors.append(f"TruffleHog: {e}")
         print(f"  ✗ {e}")
-    
+
     print("\n3/3 Running Checkov...")
     try:
         scan_checkov(c)
     except RuntimeError as e:
         errors.append(f"Checkov: {e}")
         print(f"  ✗ {e}")
-    
-    print("\n" + "="*70)
+
+    print("\n" + "=" * 70)
     if errors:
         print(f"✗ {len(errors)} scanner(s) failed:\n")
         for err in errors:
             print(f"  • {err}")
         raise RuntimeError(f"Security scan failed: {len(errors)} scanner(s) did not complete")
     else:
-        print(f"✓ All security scanners completed successfully")
+        print("✓ All security scanners completed successfully")
         print(f"  Results: {SCAN_DIR}/")
 
 
 # ── Dev server tasks ─────────────────────────────────────────────────────────
+
 
 @task
 def bot(c):
@@ -332,15 +398,8 @@ def build(c):
     c.run("bazelisk build //...")
 
 
-@task(name="lock-update")
-def lock_update(c):
-    """Regenerate requirements.lock from pyproject.toml (run after adding deps)."""
-    c.run("uv export --no-dev --format requirements-txt --no-hashes > requirements.lock")
-    c.run("sed -i '' '/^-e \\./d' requirements.lock")
-    print("✓ requirements.lock updated — commit both pyproject.toml and requirements.lock")
-
-
 # ── Docker + Kubernetes ───────────────────────────────────────────────────────
+
 
 @task(name="docker-build")
 def docker_build(c):
@@ -353,16 +412,18 @@ def docker_build(c):
 @task(name="k8s-load-images")
 def k8s_load_images(c):
     """Not needed in Rancher Desktop dockerd mode.
-    
+
     Reference: see CLAUDE.md "Rancher Desktop runtime environment" section.
-    
+
     In Rancher Desktop's dockerd mode (cri-dockerd), images built via `docker build`
-    are immediately visible to k3s. The k3s containerd socket does not exist and 
+    are immediately visible to k3s. The k3s containerd socket does not exist and
     `docker save | k3s ctr images import -` would fail.
-    
+
     Simply run `inv docker-build` and images are ready for k3s deployment.
     """
-    print("ℹ Not needed in Rancher Desktop dockerd mode — docker build makes images visible to k3s automatically.")
+    print(
+        "ℹ Not needed in Rancher Desktop dockerd mode — docker build makes images visible to k3s automatically."
+    )
 
 
 @task(name="k8s-psql")
@@ -370,6 +431,7 @@ def k8s_psql(c):
     """Open a psql shell to Postgres (NodePort managed by k3s-dev)."""
     import json
     import keyring
+
     state_file = Path.home() / ".k3s-dev" / "state.json"
     if not state_file.exists():
         print("k3s-dev state not found — provision postgres first:")
@@ -417,7 +479,8 @@ def k8s_logs(c):
     """Stream live bot logs via kubectl (stdout only — last ~2 MiB of in-memory buffer)."""
     result = c.run(
         f"kubectl get pod -n {NS} -l app=robinhood-bot -o jsonpath='{{.items[0].metadata.name}}'",
-        hide=True, warn=True,
+        hide=True,
+        warn=True,
     )
     pod = result.stdout.strip()
     if not pod:
@@ -435,7 +498,8 @@ def k8s_logs_file(c, date=""):
     """
     result = c.run(
         f"kubectl get pod -n {NS} -l app=robinhood-bot -o jsonpath='{{.items[0].metadata.name}}'",
-        hide=True, warn=True,
+        hide=True,
+        warn=True,
     )
     pod = result.stdout.strip()
     if not pod:
@@ -452,7 +516,8 @@ def k8s_logs_ls(c):
     """List all rotated log files on the PVC with sizes."""
     result = c.run(
         f"kubectl get pod -n {NS} -l app=robinhood-bot -o jsonpath='{{.items[0].metadata.name}}'",
-        hide=True, warn=True,
+        hide=True,
+        warn=True,
     )
     pod = result.stdout.strip()
     if not pod:
@@ -470,7 +535,8 @@ def k8s_logs_pull(c, dest="./bot-logs"):
     """
     result = c.run(
         f"kubectl get pod -n {NS} -l app=robinhood-bot -o jsonpath='{{.items[0].metadata.name}}'",
-        hide=True, warn=True,
+        hide=True,
+        warn=True,
     )
     pod = result.stdout.strip()
     if not pod:
@@ -480,6 +546,7 @@ def k8s_logs_pull(c, dest="./bot-logs"):
     c.run(f"kubectl cp {NS}/{pod}:/logs {dest}", warn=True)
     print(f"✓ Logs copied to {dest}/")
     import subprocess
+
     subprocess.run(["ls", "-lh", dest])
 
 
@@ -518,7 +585,8 @@ def k8s_backup_ls(c):
     """List all database backups on the backup PVC."""
     result = c.run(
         f"kubectl get pod -n {NS} -l app=robinhood -o jsonpath='{{.items[0].metadata.name}}'",
-        hide=True, warn=True,
+        hide=True,
+        warn=True,
     )
     pod = result.stdout.strip()
     if not pod:
@@ -531,10 +599,23 @@ def k8s_backup_ls(c):
     )
 
 
+@task
+def check(c):
+    """Ruff lint + format check + pytest. Required gate before docker-build."""
+    c.run("uv run ruff check .", echo=True)
+    c.run("uv run ruff format --check .", echo=True)
+    c.run("uv run pytest -x -q --tb=short", echo=True)
+
+
 @task(name="k8s-delete")
 def k8s_delete(c):
     """Delete app resources (bot, dashboard, configmap). Postgres is owned by k3s-dev."""
-    for resource in ("deployment/robinhood-bot", "deployment/robinhood-dashboard",
-                     "service/robinhood-dashboard", "pvc/bot-logs", "configmap/trader-config"):
+    for resource in (
+        "deployment/robinhood-bot",
+        "deployment/robinhood-dashboard",
+        "service/robinhood-dashboard",
+        "pvc/bot-logs",
+        "configmap/trader-config",
+    ):
         c.run(f"kubectl delete {resource} -n {NS} --ignore-not-found", warn=True)
     print("✓ App resources deleted (postgres untouched — use: k3s-dev postgres remove robinhood)")

@@ -22,8 +22,9 @@ dev = [
     "diagrams>=0.23.0",
     "playwright>=1.60.0",
     "bandit>=1.7.5",
-    "truffleHog>=3.63.0",
+
     "checkov>=3.2.0",
+    "pip-audit>=2.7.0",
 ]
 
 test = [
@@ -31,7 +32,9 @@ test = [
     "pytest-cov>=5.0.0",
     "pytest-asyncio>=0.24.0",
     "anyio>=4.0.0",
+    "ruff>=0.9.0",
 ]
+
 
 [tool.hatch.build.targets.wheel]
 packages = ["broker", "strategy", "risk", "db", "tax", "vault"]
@@ -42,6 +45,14 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP"]
+# E402/I001: pre-existing pattern — from __future__ placed before module docstring across all files
+ignore = ["E501", "E402", "I001"]
 
 [build-system]
 requires = ["hatchling"]

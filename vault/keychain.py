@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 Thin wrapper around python-keyring for macOS Keychain access.
 All app secrets are stored under service name 'robinhood-trader'.
