@@ -70,6 +70,9 @@ class RuntimeConfig(Base):
     # Bollinger Bands params (used by bollinger_bands)
     bb_period: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
     bb_std_dev: Mapped[float] = mapped_column(Float, nullable=False, default=2.0)
+    # Retry params (order and cycle retries)
+    order_max_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=4)
+    max_cycle_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
@@ -113,3 +116,16 @@ class DesiredPosition(Base):
     # status: 'pending' | 'achieved' | 'failed' | 'superseded'
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
     error_msg: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+
+
+class Position(Base):
+    """Current open positions, recorded every bot cycle. Updated by broker.get_positions()."""
+    __tablename__ = "positions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False)
+    quantity: Mapped[float] = mapped_column(Float, nullable=False)
+    avg_cost: Mapped[float] = mapped_column(Float, nullable=False)
+    current_price: Mapped[float] = mapped_column(Float, nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    held_since: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

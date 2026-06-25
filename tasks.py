@@ -193,10 +193,17 @@ def docker_build(c):
 
 @task(name="k8s-load-images")
 def k8s_load_images(c):
-    """Import local Docker images into k3s (only needed for bare k3s, not Rancher Desktop)."""
-    c.run("docker save robinhood-bot:latest      | k3s ctr images import -")
-    c.run("docker save robinhood-dashboard:latest | k3s ctr images import -")
-    print("✓ Images loaded into k3s")
+    """Not needed in Rancher Desktop dockerd mode.
+    
+    Reference: see CLAUDE.md "Rancher Desktop runtime environment" section.
+    
+    In Rancher Desktop's dockerd mode (cri-dockerd), images built via `docker build`
+    are immediately visible to k3s. The k3s containerd socket does not exist and 
+    `docker save | k3s ctr images import -` would fail.
+    
+    Simply run `inv docker-build` and images are ready for k3s deployment.
+    """
+    print("ℹ Not needed in Rancher Desktop dockerd mode — docker build makes images visible to k3s automatically.")
 
 
 @task(name="k8s-psql")
@@ -375,5 +382,3 @@ def k8s_delete(c):
                      "service/robinhood-dashboard", "pvc/bot-logs", "configmap/trader-config"):
         c.run(f"kubectl delete {resource} -n {NS} --ignore-not-found", warn=True)
     print("✓ App resources deleted (postgres untouched — use: k3s-dev postgres remove robinhood)")
-
-

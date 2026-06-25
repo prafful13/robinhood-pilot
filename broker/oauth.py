@@ -14,12 +14,15 @@ import asyncio
 import base64
 import hashlib
 import json
+import logging
 import os
 import secrets
 import time
 import webbrowser
 from pathlib import Path
 from urllib.parse import urlencode, urlparse
+
+log = logging.getLogger(__name__)
 
 import httpx
 from aiohttp import web
@@ -183,8 +186,12 @@ async def get_access_token(cfg: dict) -> str:
             fresh = await _refresh_access_token(token_url, _get_client_id(cfg), tokens["refresh_token"])
             _save_tokens(fresh)
             return fresh["access_token"]
-        except Exception:
-            pass  # fall through to full auth
+        except Exception as exc:
+            if _is_in_cluster():
+                msg = f"token refresh failed in k8s pod — re-auth required: {exc}"
+                log.critical(msg)
+                raise RuntimeError(msg) from exc
+            # Local: fall through to full PKCE browser flow
 
     # Full PKCE flow (local only — pods never reach here)
     code_verifier, code_challenge = _generate_pkce()

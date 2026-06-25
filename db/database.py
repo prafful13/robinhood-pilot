@@ -53,6 +53,8 @@ def init_runtime_config(cfg: dict) -> None:
                 macd_signal_period=s.get("macd_signal_period", 9),
                 bb_period=s.get("bb_period", 20),
                 bb_std_dev=s.get("bb_std_dev", 2.0),
+                order_max_retries=r.get("order_max_retries", 4),
+                max_cycle_retries=r.get("max_cycle_retries", 5),
             ))
             db.commit()
         except Exception:
@@ -75,6 +77,8 @@ def _migrate() -> None:
             ("macd_signal_period", "INTEGER", "9"),
             ("bb_period", "INTEGER", "20"),
             ("bb_std_dev", "FLOAT", "2.0"),
+            ("order_max_retries", "INTEGER", "4"),
+            ("max_cycle_retries", "INTEGER", "5"),
         ]:
             conn.execute(text(
                 f"ALTER TABLE runtime_config "

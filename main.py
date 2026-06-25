@@ -20,7 +20,10 @@ import yaml
 
 from broker.robinhood import RobinhoodClient
 from db.database import SessionLocal, init_db, init_runtime_config
-from db.models import BotControl, BotStatus, DesiredPosition, PortfolioSnapshot, RuntimeConfig, SymbolSnapshot, Trade
+from db.models import (
+    BotControl, BotStatus, DesiredPosition, Position, PortfolioSnapshot,
+    RuntimeConfig, SymbolSnapshot, Trade,
+)
 from risk.manager import RiskManager
 from strategy.base import Strategy
 from strategy.bollinger import BollingerBands
@@ -263,10 +266,19 @@ async def _reconcile(
             else:
                 order_id = result.get("data", {}).get("order", {}).get("id")
                 amt = target_usd or risk.max_trade_usd
-                price = signal_price or 0.0
+                if signal_price is not None:
+                    price = signal_price
+                else:
+                    quotes = await broker.get_quotes([symbol])
+                    price = float(quotes.get(symbol, {}).get("last_trade_price") or 0)
+                    if not price:
+                        log.error(f"  ✗ BUY {symbol}: signal_price is None and live quote unavailable — trade not recorded")
+                        _update_desired(d_id, status="achieved", last_attempted_at=now, error_msg=None)
+                        log.info(f"  ✓ BUY {symbol} achieved  order={order_id}")
+                        continue
                 record_trade(
                     symbol=symbol, side="buy",
-                    quantity=amt / price if price else 0,
+                    quantity=amt / price,
                     price=price, dollar_amount=amt,
                     order_id=order_id, rsi=signal_rsi,
                 )
@@ -297,7 +309,16 @@ async def _reconcile(
             else:
                 order_id = result.get("data", {}).get("order", {}).get("id")
                 qty = float(position["quantity"])
-                price = signal_price or 0.0
+                if signal_price is not None:
+                    price = signal_price
+                else:
+                    quotes = await broker.get_quotes([symbol])
+                    price = float(quotes.get(symbol, {}).get("last_trade_price") or 0)
+                    if not price:
+                        log.error(f"  ✗ SELL {symbol}: signal_price is None and live quote unavailable — trade not recorded")
+                        _update_desired(d_id, status="achieved", last_attempted_at=now, error_msg=None)
+                        log.info(f"  ✓ SELL {symbol} achieved  order={order_id}")
+                        continue
                 record_trade(
                     symbol=symbol, side="sell",
                     quantity=qty, price=price,
@@ -311,6 +332,34 @@ async def _reconcile(
                 log.info(f"  ✓ SELL {symbol} achieved  order={order_id}")
 
 
+def _record_positions(positions: list[dict], now: datetime) -> None:
+    if not positions:
+        return
+    with SessionLocal() as db:
+        for pos in positions:
+            qty = float(pos.get("quantity", 0))
+            if qty <= 0:
+                continue
+            symbol = pos.get("symbol", "")
+            avg_cost = float(pos.get("average_buy_price", 0))
+            current_price = float(pos.get("current_price", 0))
+            held_since = None
+            if "opened_at" in pos:
+                try:
+                    held_since = datetime.fromisoformat(pos["opened_at"].replace("Z", "+00:00")).replace(tzinfo=None)
+                except (ValueError, AttributeError):
+                    pass
+            db.add(Position(
+                symbol=symbol,
+                quantity=qty,
+                avg_cost=avg_cost,
+                current_price=current_price,
+                recorded_at=now,
+                held_since=held_since,
+            ))
+        db.commit()
+
+
 async def run_cycle(broker: RobinhoodClient, strategy: Strategy, risk: RiskManager, account: str, token_data: dict | None = None):
     log.info("── running strategy cycle ──")
     now = datetime.now(ET).replace(tzinfo=None)
@@ -318,6 +367,7 @@ async def run_cycle(broker: RobinhoodClient, strategy: Strategy, risk: RiskManag
     positions = await broker.get_positions(account)
     portfolio = await broker.get_portfolio(account)
     _record_portfolio(portfolio, now)
+    _record_positions(positions, now)
     _record_bot_status(token_data, now)
 
     signals = await strategy.generate_signals(broker)
@@ -400,6 +450,8 @@ async def _maybe_refresh_portfolio(broker: RobinhoodClient, account: str) -> Non
         now = datetime.now(ET).replace(tzinfo=None)
         portfolio = await broker.get_portfolio(account)
         _record_portfolio(portfolio, now)
+        positions = await broker.get_positions(account)
+        _record_positions(positions, now)
         log.info("manual portfolio refresh completed")
     except Exception as e:
         log.warning(f"manual portfolio refresh failed: {e}")
