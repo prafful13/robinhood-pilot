@@ -55,6 +55,9 @@ def init_runtime_config(cfg: dict) -> None:
                 bb_std_dev=s.get("bb_std_dev", 2.0),
                 order_max_retries=r.get("order_max_retries", 4),
                 max_cycle_retries=r.get("max_cycle_retries", 5),
+                max_notional_per_order=r.get("max_notional_per_order", r.get("max_trade_usd", 300.0)),
+                max_orders_per_cycle=r.get("max_orders_per_cycle", 3),
+                max_concentration_pct=r.get("max_concentration_pct", 25.0),
             ))
             db.commit()
         except Exception:
@@ -68,6 +71,15 @@ def _migrate() -> None:
             "ALTER TABLE bot_control "
             "ADD COLUMN IF NOT EXISTS portfolio_refresh_requested BOOLEAN NOT NULL DEFAULT FALSE"
         ))
+        # Kill-switch columns on bot_control
+        conn.execute(text(
+            "ALTER TABLE bot_control "
+            "ADD COLUMN IF NOT EXISTS kill_switch BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
+        conn.execute(text(
+            "ALTER TABLE bot_control "
+            "ADD COLUMN IF NOT EXISTS kill_switch_set_at TIMESTAMP"
+        ))
         # Remove snapshots written before the portfolio field-name fix (equity was always 0)
         conn.execute(text("DELETE FROM portfolio_snapshots WHERE equity = 0"))
         # MACD + Bollinger Bands columns added to runtime_config
@@ -79,6 +91,10 @@ def _migrate() -> None:
             ("bb_std_dev", "FLOAT", "2.0"),
             ("order_max_retries", "INTEGER", "4"),
             ("max_cycle_retries", "INTEGER", "5"),
+            # Order-level safety guardrails
+            ("max_notional_per_order", "FLOAT", "300.0"),
+            ("max_orders_per_cycle", "INTEGER", "3"),
+            ("max_concentration_pct", "FLOAT", "25.0"),
         ]:
             conn.execute(text(
                 f"ALTER TABLE runtime_config "

@@ -73,6 +73,10 @@ class RuntimeConfig(Base):
     # Retry params (order and cycle retries)
     order_max_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=4)
     max_cycle_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    # Order-level safety guardrails (RiskLimits)
+    max_notional_per_order: Mapped[float] = mapped_column(Float, nullable=False, default=300.0)
+    max_orders_per_cycle: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    max_concentration_pct: Mapped[float] = mapped_column(Float, nullable=False, default=25.0)
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
@@ -84,6 +88,9 @@ class BotControl(Base):
     paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     paused_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     portfolio_refresh_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Kill-switch: when True all order submission is halted; monitoring continues.
+    kill_switch: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    kill_switch_set_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class SymbolSnapshot(Base):
