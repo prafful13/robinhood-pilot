@@ -6,6 +6,7 @@ Usage:
 
 Secrets:    keychain-set, keychain-get, secrets-init, k8s-seal
 Local dev:  auth, bot, dashboard, build, lock-update
+Security:   scan, scan-bandit, scan-truffleHog, scan-checkov
 Postgres:   k8s-psql  (provisioned externally via k3s-dev)
 Containers: docker-build, k8s-apply, k8s-status, k8s-logs, k8s-stop, k8s-start, k8s-restart, k8s-delete
 
@@ -28,6 +29,8 @@ Workflow (first time):
 from __future__ import annotations
 
 import base64
+import json
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -39,6 +42,7 @@ VENV_PYTHON = PROJECT / ".venv" / "bin" / "python"
 
 NS = "robinhood-trader"
 SEALED_DIR = PROJECT / "k8s" / "sealed"
+SCAN_DIR = PROJECT / ".security-scans"
 
 
 # ── Keychain helpers ─────────────────────────────────────────────────────────
@@ -113,7 +117,6 @@ def _seal_secret(name: str, data: dict[str, str]) -> None:
         yaml.dump(secret, f)
         tmp = f.name
 
-    import subprocess
     result = subprocess.run(
         ["kubeseal", "--format", "yaml"],
         input=Path(tmp).read_bytes(),
@@ -151,6 +154,162 @@ def k8s_seal(c):
 
     print("\nApply with:")
     print("  kubectl apply -f k8s/sealed/")
+
+
+# ── Security scanning ────────────────────────────────────────────────────────
+
+def _validate_scanner_output(tool_name: str, output: str, must_contain: list[str] = None) -> None:
+    """Validate that scanner produced non-empty, structured output.
+    
+    Raises RuntimeError if output is empty or lacks expected markers.
+    """
+    if not output or not output.strip():
+        raise RuntimeError(
+            f"{tool_name} produced empty output — likely execution failure, "
+            "wrong target path, or output dropped. See task logs above for details."
+        )
+    
+    if must_contain:
+        for marker in must_contain:
+            if marker not in output:
+                raise RuntimeError(
+                    f"{tool_name} output missing expected marker '{marker}' — "
+                    "scan may not have completed successfully."
+                )
+
+
+@task(name="scan-bandit")
+def scan_bandit(c):
+    """Run Bandit security scanner with verbose output and validation.
+    
+    Bandit scans for common security issues in Python code.
+    Fail-safe: rejects empty output and validates JSON schema completion.
+    """
+    SCAN_DIR.mkdir(parents=True, exist_ok=True)
+    out_file = SCAN_DIR / "bandit.json"
+    
+    result = c.run(
+        f"bandit -r {PROJECT} -f json -o {out_file} -v 2>&1",
+        warn=True,
+    )
+    
+    if not out_file.exists():
+        raise RuntimeError("Bandit failed to create output file — execution likely failed")
+    
+    output = out_file.read_text()
+    _validate_scanner_output("Bandit", output, must_contain=["results", "metrics"])
+    
+    try:
+        data = json.loads(output)
+        metrics = data.get("metrics", {})
+        total_issues = sum(metrics.values()) if isinstance(metrics, dict) else 0
+        print(f"✓ Bandit scan complete: {total_issues} issues found")
+        print(f"  Output: {out_file}")
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Bandit output is not valid JSON: {e}")
+
+
+@task(name="scan-truffleHog")
+def scan_trufflehog(c):
+    """Run TruffleHog to detect leaked secrets with validation.
+    
+    TruffleHog scans for high-entropy strings and known secret patterns.
+    Fail-safe: rejects empty output and validates JSON line completion.
+    """
+    SCAN_DIR.mkdir(parents=True, exist_ok=True)
+    out_file = SCAN_DIR / "trufflehog.json"
+    
+    result = c.run(
+        f"truffleHog filesystem {PROJECT} --json > {out_file} 2>&1",
+        warn=True,
+    )
+    
+    if not out_file.exists():
+        raise RuntimeError("TruffleHog failed to create output file — execution likely failed")
+    
+    output = out_file.read_text()
+    _validate_scanner_output("TruffleHog", output, must_contain=["Filesystem scan"])
+    
+    lines = output.strip().split('\n')
+    detected_count = len([l for l in lines if l.strip() and l.strip() != "Filesystem scan complete"])
+    print(f"✓ TruffleHog scan complete: {detected_count} potential secrets checked")
+    print(f"  Output: {out_file}")
+
+
+@task(name="scan-checkov")
+def scan_checkov(c):
+    """Run Checkov to validate IaC and config files with validation.
+    
+    Checkov scans Kubernetes manifests, Dockerfiles, and config files.
+    Fail-safe: rejects empty output and validates JSON schema completion.
+    """
+    SCAN_DIR.mkdir(parents=True, exist_ok=True)
+    out_file = SCAN_DIR / "checkov.json"
+    
+    result = c.run(
+        f"checkov -d {PROJECT} -o json --quiet > {out_file} 2>&1",
+        warn=True,
+    )
+    
+    if not out_file.exists():
+        raise RuntimeError("Checkov failed to create output file — execution likely failed")
+    
+    output = out_file.read_text()
+    _validate_scanner_output("Checkov", output, must_contain=["check_type", "summary"])
+    
+    try:
+        data = json.loads(output)
+        summary = data.get("summary", {})
+        passed = summary.get("passed", 0)
+        failed = summary.get("failed", 0)
+        skipped = summary.get("skipped", 0)
+        print(f"✓ Checkov scan complete: {passed} passed, {failed} failed, {skipped} skipped")
+        print(f"  Output: {out_file}")
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Checkov output is not valid JSON: {e}")
+
+
+@task(name="scan")
+def scan(c):
+    """Run all security scanners (Bandit, TruffleHog, Checkov) with integrity validation.
+    
+    Fail-safe: Rejects empty output from any scanner and validates structured output.
+    All results saved to .security-scans/ directory.
+    """
+    print("Running security scanners with integrity validation...\n")
+    
+    errors = []
+    
+    print("1/3 Running Bandit...")
+    try:
+        scan_bandit(c)
+    except RuntimeError as e:
+        errors.append(f"Bandit: {e}")
+        print(f"  ✗ {e}")
+    
+    print("\n2/3 Running TruffleHog...")
+    try:
+        scan_trufflehog(c)
+    except RuntimeError as e:
+        errors.append(f"TruffleHog: {e}")
+        print(f"  ✗ {e}")
+    
+    print("\n3/3 Running Checkov...")
+    try:
+        scan_checkov(c)
+    except RuntimeError as e:
+        errors.append(f"Checkov: {e}")
+        print(f"  ✗ {e}")
+    
+    print("\n" + "="*70)
+    if errors:
+        print(f"✗ {len(errors)} scanner(s) failed:\n")
+        for err in errors:
+            print(f"  • {err}")
+        raise RuntimeError(f"Security scan failed: {len(errors)} scanner(s) did not complete")
+    else:
+        print(f"✓ All security scanners completed successfully")
+        print(f"  Results: {SCAN_DIR}/")
 
 
 # ── Dev server tasks ─────────────────────────────────────────────────────────
@@ -230,7 +389,6 @@ def k8s_apply(c):
       - k3s-dev postgres add robinhood ... (postgres-credentials Secret must exist)
       - kubectl apply -f k8s/sealed/       (rh-tokens SealedSecret must exist)
     """
-    # ConfigMap from config.yaml
     c.run(
         f"kubectl create configmap trader-config "
         f"--from-file=config.yaml=config.yaml "
@@ -238,10 +396,8 @@ def k8s_apply(c):
         f"--dry-run=client -o yaml | kubectl apply -f -"
     )
 
-    # Logs PVC
     c.run("kubectl apply -f k8s/logs-pvc.yaml")
 
-    # Application deployments
     for manifest in ("bot-deployment.yaml", "dashboard-deployment.yaml", "dashboard-service.yaml"):
         c.run(f"kubectl apply -f k8s/{manifest}")
 
